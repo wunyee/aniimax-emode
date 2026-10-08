@@ -274,7 +274,7 @@ export function getTargetEmodeWatts(generatorCapacity = getGeneratorCapacity(), 
 
 export function autoAllocateEmode(homeLevel, maxWatts = getTargetEmodeWatts(), activeProducingCounts = null) {
     if (homeLevel < 12) return {};
-    const { facilities } = chosenSimpleSetup(homeLevel);
+    const { facilities } = simpleSetup(homeLevel);
     let remainingWatts = maxWatts;
     const allocated = {};
 
@@ -719,7 +719,7 @@ function getPersistedFieldIds() {
         'rate-unit', 'season-on', 'layout-sim-on', 'season-currency-per-day',
         'aniimo-best', 'aniimo-minimum', 'aniimo-custom',
         'power-grid-rate', 'emode-simple-on', 'simple-power-grid-rate',
-        'generator-capacity', 'simple-generator-capacity', 'use-aniipod-maker', 'use-dance-pad-polisher',
+        'generator-capacity', 'simple-generator-capacity',
         ...SEASON.crops.map(crop => `season-min-${crop}`)
     ];
 }
@@ -941,27 +941,10 @@ function populateHomeLevels() {
     }
 }
 
-// Facilities a player may leave out of simple mode's plans, each with its switch: they make
-// Aniipods and Growth items, which a player may rather make by hand. In a plan they also draw
-// generator power like any other electric facility.
-const OPTIONAL_FACILITIES = [
-    { name: 'Aniipod Maker', id: 'use-aniipod-maker' },
-    { name: 'Dance Pad Polisher', id: 'use-dance-pad-polisher' },
-];
-
-// `simpleSetup`, less any optional facility switched off.
-function chosenSimpleSetup(homeLevel) {
-    const setup = simpleSetup(homeLevel);
-    for (const { name, id } of OPTIONAL_FACILITIES) {
-        if (document.getElementById(id)?.checked === false) setup.facilities[name] = [{ count: 0, level: 1 }];
-    }
-    return setup;
-}
-
 // One entry per built facility, e.g. "10 Farmland Lv.2".
 function renderSimpleSummary() {
     const homeLevel = selectedHomeLevel();
-    const { facilities, modules } = chosenSimpleSetup(homeLevel);
+    const { facilities, modules } = simpleSetup(homeLevel);
     const chip = (count, name, level) => `
         <div class="chip"><span><span class="chip-count">${count}</span> ${name}</span>${level ? `<span class="chip-level">${level}</span>` : ''}</div>`;
     const built = FACILITIES
@@ -1005,7 +988,7 @@ function applyConfigMode() {
 
 // Fills the advanced inputs with everything `homeLevel` allows.
 function fillAdvancedFrom(homeLevel) {
-    const { facilities, modules } = chosenSimpleSetup(homeLevel);
+    const { facilities, modules } = simpleSetup(homeLevel);
     FACILITIES.forEach(f => {
         facilityTiers[f.name] = facilities[f.name].map(t => ({ ...t }));
         renderTierRows(f.name);
@@ -1022,9 +1005,6 @@ function fillAdvancedFrom(homeLevel) {
 function attachModeHandlers() {
     document.getElementById('mode-simple').addEventListener('change', applyConfigMode);
     document.getElementById('mode-advanced').addEventListener('change', applyConfigMode);
-    for (const { id } of OPTIONAL_FACILITIES) {
-        document.getElementById(id).addEventListener('change', renderSimpleSummary);
-    }
     document.getElementById('home-level').addEventListener('change', () => {
         renderSimpleSummary();
         renderStrategy();
@@ -1106,7 +1086,7 @@ const tierLevel = tiers => Math.max(0, ...(tiers || []).filter(t => t.count > 0)
 // mode, where the player enters what they have rather than their RV level.
 function homeLevelCovering(input) {
     for (let level = 1; level <= MAX_HOME_LEVEL; level++) {
-        const allowed = chosenSimpleSetup(level);
+        const allowed = simpleSetup(level);
         const facilitiesFit = FACILITIES.every(f => {
             const have = input.facilities[f.name];
             if (tierCount(have) === 0) return true;
@@ -1194,7 +1174,7 @@ function improvementCandidates(base, setup) {
     // Advanced mode: a module at a higher level, one more facility, or one facility at a higher
     // level, within what the RV level covering the rest allows.
     if (planContext && !planContext.simple) {
-        const allowed = chosenSimpleSetup(homeLevelCovering(base));
+        const allowed = simpleSetup(homeLevelCovering(base));
         for (const [module, level] of Object.entries(base.modules)) {
             for (const next of levelsAbove(level, allowed.modules[module] ?? 0)) {
                 candidates.push({
@@ -2779,7 +2759,7 @@ function attachPriorityHandlers() {
 // catches better, so the strategy makes only this one.
 function bestAniipod() {
     const tiers = isSimpleMode()
-        ? chosenSimpleSetup(selectedHomeLevel()).facilities['Aniipod Maker']
+        ? simpleSetup(selectedHomeLevel()).facilities['Aniipod Maker']
         : facilityTiers['Aniipod Maker'];
     const level = Math.max(0, ...(tiers || []).filter(t => t.count > 0).map(t => t.level));
     return level > 0 ? ANIIPOD_TIERS[Math.min(level, ANIIPOD_TIERS.length) - 1] : null;
@@ -3070,7 +3050,7 @@ function getPlanInputValues(activeProducingCounts = null) {
     // `attachFacilityTierHandlers`), sent straight through as a list of tiers per facility; see
     // `JsPlanInput::facilities` in wasm.rs for the shape (`[{count, level}, ...]` per facility).
     if (isSimpleMode()) {
-        const { facilities, modules } = chosenSimpleSetup(selectedHomeLevel());
+        const { facilities, modules } = simpleSetup(selectedHomeLevel());
         return {
             currency: 'coins',
             priorities: activePriorities(),
