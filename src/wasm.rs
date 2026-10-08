@@ -1428,12 +1428,13 @@ pub fn exact_byproduct_problems(input_json: &str) -> String {
 pub fn exact_priority_problem(input_json: &str, stage_json: &str, target: &str) -> String {
     let stage: JsStage = serde_json::from_str(stage_json).unwrap_or_default();
     let lp = match PreparedInput::from_json(input_json, true) {
+        // With a level-up, at the pace found first (see `JsStage::goal`).
         Ok(prepared) => crate::exact::write_lp(
             &prepared.items,
             target,
             &prepared.facility_counts,
             &prepared.module_levels,
-            crate::exact::Goal::Earn { floors: &stage.floors },
+            stage.goal(&prepared.input),
         ),
         Err(_) => Default::default(),
     };
@@ -1481,8 +1482,8 @@ struct JsStage {
 impl JsStage {
     fn goal<'a>(&'a self, input: &'a JsPlanInput) -> crate::exact::Goal<'a> {
         match (&input.level_up, self.pace, self.coins) {
-            (Some(level_up), Some(pace), Some(coins)) => crate::exact::Goal::StockUp(level_up, pace, coins),
-            (Some(level_up), Some(pace), None) => crate::exact::Goal::EarnWhileLevelingUp(level_up, pace),
+            (Some(level_up), Some(pace), Some(coins)) => crate::exact::Goal::StockUp(level_up, pace, coins, &self.floors),
+            (Some(level_up), Some(pace), None) => crate::exact::Goal::EarnWhileLevelingUp(level_up, pace, &self.floors),
             _ => crate::exact::Goal::Earn { floors: &self.floors },
         }
     }
@@ -1542,7 +1543,7 @@ pub fn exact_plan(input_json: &str, stage_json: &str, solution_json: &str) -> St
     let currency = prepared.input.currency.clone();
     let goal = stage.goal(&prepared.input);
     let level_up = match goal {
-        crate::exact::Goal::EarnWhileLevelingUp(level_up, _) | crate::exact::Goal::StockUp(level_up, ..) => Some(level_up),
+        crate::exact::Goal::EarnWhileLevelingUp(level_up, ..) | crate::exact::Goal::StockUp(level_up, ..) => Some(level_up),
         _ => None,
     };
     let Some(exact) = crate::exact::plan_from_values(

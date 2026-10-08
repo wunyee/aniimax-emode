@@ -98,21 +98,7 @@ async function exactPlanJson(pkg, payload, step = () => {}, first = () => {}) {
         allProven &&= most.proven;
         stage.floors.push([problem.resource, most.objective]);
     }
-    // The player's priorities, in order: each is made as much as the ones before it allow, and
-    // the coin solve after them has to keep all of it up.
-    for (const target of JSON.parse(payload).priorities || []) {
-        step(`priority:${target}`, 'start');
-        const alone = stage.floors.length === 0;
-        const priority = JSON.parse(exact_priority_problem(payload, JSON.stringify(stage), target));
-        if (!priority.lp) throw new Error('this setup isn\'t covered by the exact planner');
-        const most = await solveModel(priority);
-        step(`priority:${target}`, 'done', most?.proven);
-        if (!most) throw new Error(`no plan found for the most ${target}`);
-        if (alone) first({ measure: target, objective: most.objective, proven: most.proven });
-        allProven &&= most.proven;
-        stage.floors.push([target, Math.max(0, most.objective)]);
-    }
-
+    // The soonest level-up comes first; everything after keeps its pace.
     let levelUpNote = null;
     const levelUp = JSON.parse(exact_level_up_problem(payload));
     if (levelUp.lp) {
@@ -128,6 +114,22 @@ async function exactPlanJson(pkg, payload, step = () => {}, first = () => {}) {
             levelUpNote = 'unreachable';
         }
     }
+    // The player's priorities, in order: each is made as much as the ones before it allow, and
+    // the coin solve after them has to keep all of it up. With a level-up, they all keep its pace
+    // too (see `JsStage::goal` in wasm.rs), so they never slow it.
+    for (const target of JSON.parse(payload).priorities || []) {
+        step(`priority:${target}`, 'start');
+        const alone = stage.floors.length === 0 && !stage.pace;
+        const priority = JSON.parse(exact_priority_problem(payload, JSON.stringify(stage), target));
+        if (!priority.lp) throw new Error('this setup isn\'t covered by the exact planner');
+        const most = await solveModel(priority);
+        step(`priority:${target}`, 'done', most?.proven);
+        if (!most) throw new Error(`no plan found for the most ${target}`);
+        if (alone) first({ measure: target, objective: most.objective, proven: most.proven });
+        allProven &&= most.proven;
+        stage.floors.push([target, Math.max(0, most.objective)]);
+    }
+
     let stageJson = JSON.stringify(stage);
     let problem = JSON.parse(exact_problem(payload, stageJson));
     if (!problem.lp) throw new Error('this setup isn\'t covered by the exact planner');

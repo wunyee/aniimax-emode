@@ -719,7 +719,7 @@ function getPersistedFieldIds() {
         'rate-unit', 'season-on', 'layout-sim-on', 'season-currency-per-day',
         'aniimo-best', 'aniimo-minimum', 'aniimo-custom',
         'power-grid-rate', 'emode-simple-on', 'simple-power-grid-rate',
-        'generator-capacity', 'simple-generator-capacity',
+        'generator-capacity', 'simple-generator-capacity', 'level-up-exp', 'level-up-aniipods',
         ...SEASON.crops.map(crop => `season-min-${crop}`)
     ];
 }
@@ -2661,8 +2661,17 @@ function shownPriorities() {
 }
 
 // The ticked priorities, best first; none for the level-up strategy.
+// The Priorities strategy's ranking; or, levelling up, the extras switched on under it, which
+// the plan makes only as far as the soonest level-up leaves room for (see worker.js).
 function activePriorities() {
+    if (isLevelUpStrategy()) return levelUpInput() ? levelUpExtras() : [];
     return isPriorityStrategy() ? shownPriorities().filter(p => p.on).map(p => p.target) : [];
+}
+
+function levelUpExtras() {
+    return [['level-up-exp', 'aniimo_exp'], ['level-up-aniipods', 'aniipods']]
+        .filter(([id]) => document.getElementById(id)?.checked)
+        .map(([, target]) => target);
 }
 
 function wantsAniipods() {
@@ -4328,7 +4337,14 @@ function updateRateDisplay(pickUnit = false) {
         if (select.closest('#priority-rates')) rateLine.appendChild(select);
         const label = CURRENCY_LABELS[lastPlan.currency] || lastPlan.currency;
         const points = lastPlan.season_points > 1e-12 ? ` + ${formatRate(lastPlan.season_points * multiplier)} ${SEASON.points}` : '';
-        document.getElementById('plan-rate').textContent = `${formatRate(lastPlan.rate_per_second * multiplier)} ${label}${points}${suffix}`;
+        // Levelling up, what the extras make alongside (see `levelUpExtras`), each name and unit
+        // its own text so both translate.
+        const extras = planContext?.levelUp
+            ? (lastPlan.priorities || []).map(p => `<span> · ${formatRate(p.per_second * multiplier)} </span><span>${priorityLabel(p.target, planContext.aniipod)}</span><span>${suffix}</span>`).join('')
+            : '';
+        const rate = document.getElementById('plan-rate');
+        rate.textContent = `${formatRate(lastPlan.rate_per_second * multiplier)} ${label}${points}${suffix}`;
+        if (extras) rate.insertAdjacentHTML('beforeend', extras);
         document.getElementById('rate-label').textContent = 'Your Rate';
         rateLine.style.display = '';
         table.innerHTML = '';

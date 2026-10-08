@@ -160,13 +160,13 @@ fn solve_level_up(items: &[ProductionItem], counts: &FacilityCounts, level_up: &
     let fastest = solve_exact(items, "coins", counts, &modules, Goal::LevelUp(level_up), None, None).expect("level-up plan");
     assert!(fastest.proven_optimal && fastest.objective > 0.0);
     let pace = fastest.objective;
-    let plan = solve_exact(items, "coins", counts, &modules, Goal::EarnWhileLevelingUp(level_up, pace), None, None)
+    let plan = solve_exact(items, "coins", counts, &modules, Goal::EarnWhileLevelingUp(level_up, pace, &[]), None, None)
         .expect("earning plan");
     assert!(plan.proven_optimal);
     assert!(plan.pace.unwrap() >= pace * (1.0 - 2e-4), "pace {:?} below {pace}", plan.pace);
     check_plan(&plan, items, "coins", counts, &modules, Some(level_up)).expect("plan passes its re-check");
     // Then spare Bench and Kiln time, without giving up pace or coins.
-    let stocked = solve_exact(items, "coins", counts, &modules, Goal::StockUp(level_up, pace, plan.rate_per_second), None, None)
+    let stocked = solve_exact(items, "coins", counts, &modules, Goal::StockUp(level_up, pace, plan.rate_per_second, &[]), None, None)
         .expect("stocked plan");
     assert!(stocked.proven_optimal);
     assert!(stocked.rate_per_second >= plan.rate_per_second * (1.0 - 2e-3));
@@ -632,4 +632,37 @@ fn exact_power_grid_picks_electric_or_manual_units() {
     let err = check_plan(&over, &slow_by_hand, "coins", &counts, &modules, None).unwrap_err();
     assert!(err.contains("generator"), "{err}");
 
+}
+
+// Levelling up with Aniimo EXP on the side: the soonest level-up's pace comes first, then the
+// most EXP that pace leaves room for (a Dance Pad Polisher on Farmland potatoes, which the
+// level-up doesn't need), then coins keeping both. EXP never slows the level-up.
+#[test]
+fn exact_level_up_makes_exp_without_slowing_it() {
+    let Some(items) = load_items() else { return };
+    let counts = FacilityCounts::only(&[
+        ("Farmland", 6, 2),
+        ("Woodland", 3, 2),
+        ("Mine", 2, 2),
+        ("Woodworking Bench", 2, 2),
+        ("Chimney Kiln", 2, 2),
+        ("Dance Pad Polisher", 1, 1),
+    ]);
+    let modules = ModuleLevels::default();
+    let cost = level_up(&[("coins", 680000.0), ("standard_planks", 320.0), ("sintered_ore_brick", 350.0)], &[]);
+    let pace = solve_exact(&items, "coins", &counts, &modules, Goal::LevelUp(&cost), None, None).unwrap().objective;
+    assert!(pace > 0.0);
+
+    let exp = solve_exact(&items, "aniimo_exp", &counts, &modules, Goal::EarnWhileLevelingUp(&cost, pace, &[]), None, None).unwrap();
+    assert!(exp.proven_optimal);
+    assert!(exp.objective > 0.0, "no EXP alongside the level-up");
+    assert!(exp.pace.unwrap() >= pace * (1.0 - 2e-4), "EXP slowed the level-up: {:?} below {pace}", exp.pace);
+
+    let floors = vec![("aniimo_exp".to_string(), exp.objective)];
+    let plan = solve_exact(&items, "coins", &counts, &modules, Goal::EarnWhileLevelingUp(&cost, pace, &floors), None, None).unwrap();
+    assert!(plan.proven_optimal);
+    assert!(plan.pace.unwrap() >= pace * (1.0 - 2e-4));
+    let kept = aniimax::exact::target_rate(&plan, &items, "aniimo_exp");
+    assert!(kept >= exp.objective * (1.0 - 2e-4), "{kept} EXP/s kept of {}", exp.objective);
+    check_plan(&plan, &items, "coins", &counts, &modules, Some(&cost)).expect("plan passes its re-check");
 }
