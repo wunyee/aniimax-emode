@@ -114,6 +114,9 @@ pub struct SeasonTerms {
     /// The most season currency a day the player can spend on seeds, or `None` for no limit. The
     /// same budget on every season crop: all their seeds together stay within it.
     pub currency_per_day: Option<f64>,
+    /// The fewest plots the player wants growing this season crop all the time, e.g. to find its
+    /// variant crops for season quests; 0 for no minimum.
+    pub min_plots: u32,
 }
 
 impl ProductionItem {
@@ -601,18 +604,36 @@ pub fn default_emode_base_time(workload: f64) -> f64 {
     }
 }
 
-/// Applies E-mode production times to items in facilities running in E-mode.
-/// For each item belonging to a facility in `emode_facilities`, its `production_time` is set to
-/// `emode_base_time / power_grid_rate`.
-pub fn apply_emode(items: &mut [ProductionItem], emode_facilities: &[String], power_grid_rate: f64) {
+/// Electricity's work efficiency: 100% at the standard supply rate, times the supply rate (120%
+/// at most). It works like an Aniimo at exactly the level a recipe needs and without its
+/// facility's personality: whatever the recipe's level, never faster, so a stronger Aniimo
+/// (e.g. Fire 3 with the personality on a level-2 recipe, 360%) outworks it.
+pub const EMODE_EFFICIENCY: f64 = 1.0;
+
+/// E-mode seconds for `item` (`workload`, needing a level-`required` Aniimo) at supply rate
+/// `power_grid_rate`: the time at [`EMODE_EFFICIENCY`] on the recipe's own base work rate.
+pub fn emode_seconds(item: &ProductionItem, workload: f64, required: u32, power_grid_rate: f64) -> f64 {
+    let rate = if power_grid_rate <= 0.0 { 1.0 } else { power_grid_rate };
+    Worker::new(required, false).seconds_for_item(item, workload, required) / (EMODE_EFFICIENCY * rate)
+}
+
+/// Applies E-mode production times to items in facilities running in E-mode: each item at a
+/// facility in `emode_facilities` takes [`emode_seconds`], given the ability level `requirements`
+/// says it needs (level 1 if not listed), and no longer needs an Aniimo.
+pub fn apply_emode(
+    items: &mut [ProductionItem],
+    emode_facilities: &[String],
+    power_grid_rate: f64,
+    requirements: &AniimoRequirements,
+) {
     if emode_facilities.is_empty() {
         return;
     }
-    let rate = if power_grid_rate <= 0.0 { 1.0 } else { power_grid_rate };
     for item in items.iter_mut() {
         if emode_facilities.iter().any(|f| f == &item.facility) {
-            if let Some(emode_time) = item.emode_base_time.or_else(|| item.workload.map(default_emode_base_time)) {
-                item.production_time = emode_time / rate;
+            if let Some(workload) = item.workload {
+                let required = requirements.get(&item.name).map_or(1, |(_, level)| level);
+                item.production_time = emode_seconds(item, workload, required, power_grid_rate);
                 item.workload = None;
             }
         }
@@ -1234,6 +1255,20 @@ pub struct FacilityCounts {
     default_tier: (u32, u32),
     /// The Aniimo the player has, when planning with them (see [`Crew`]).
     crew: Option<Crew>,
+    /// The generator, when the plan picks which units run on electricity (see [`PowerGrid`]).
+    power: Option<PowerGrid>,
+}
+
+/// A generator's power, for a plan that picks which units of each electric facility run on it
+/// (E-mode: a fixed time, no Aniimo) and which an Aniimo works (`"<facility> (Manual)"`, with
+/// [`MANUAL_SUFFIX`] recipes). Both kinds share the facility's units, and the electric ones
+/// together draw at most `capacity` watts.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PowerGrid {
+    /// Watts each electric unit draws, by facility.
+    pub watts: std::collections::BTreeMap<String, f64>,
+    /// The most watts all electric units together may draw.
+    pub capacity: f64,
 }
 
 impl Default for FacilityCounts {
@@ -1242,6 +1277,7 @@ impl Default for FacilityCounts {
             facilities: std::collections::HashMap::new(),
             default_tier: (1, 1),
             crew: None,
+            power: None,
         }
     }
 }
@@ -1256,6 +1292,17 @@ impl FacilityCounts {
     /// The Aniimo the player has, if planning with them.
     pub fn crew(&self) -> Option<&Crew> {
         self.crew.as_ref()
+    }
+
+    /// Lets the plan pick which units run on `power` (see [`PowerGrid`]).
+    pub fn set_power(&mut self, power: PowerGrid) -> &mut Self {
+        self.power = Some(power);
+        self
+    }
+
+    /// The generator, if the plan picks which units run on it.
+    pub fn power(&self) -> Option<&PowerGrid> {
+        self.power.as_ref()
     }
 
     /// Creates an empty `FacilityCounts` (every facility defaults to count=1, level=1).
@@ -1292,6 +1339,7 @@ impl FacilityCounts {
             facilities: std::collections::HashMap::new(),
             default_tier: (0, 1),
             crew: None,
+            power: None,
         };
         for (name, count, level) in pairs {
             fc.set(name, *count, *level);
@@ -1306,6 +1354,7 @@ impl FacilityCounts {
             facilities: std::collections::HashMap::new(),
             default_tier: (1, 99),
             crew: None,
+            power: None,
         }
     }
 

@@ -236,6 +236,8 @@ enum VarKind<'a> {
     /// How much of a roster member's day goes to staffing environment buildings of one kind
     /// (see [`crate::models::Crew`]).
     Staff { building: String, member: usize },
+    /// How many units of a facility run on electricity (see [`crate::models::PowerGrid`]).
+    Electric(String),
 }
 
 /// One linear constraint: `(variable, coefficient)` terms, comparison, right-hand side.
@@ -264,6 +266,10 @@ struct Model<'a> {
 /// the one with the fewest buildings wins. Each building in use needs an Aniimo, and otherwise
 /// the solver is free to spread three plots over two Heat Furnaces that one would cover.
 const BUILDING_TIE_BREAK: f64 = 1e-5;
+
+/// What each electric unit kept busy all the time is worth in the objective, like
+/// [`BUILDING_TIE_BREAK`]: of plans otherwise equal, the one working most on electricity wins.
+const ELECTRIC_TIE_BREAK: f64 = 1e-6;
 
 impl<'a> Model<'a> {
     fn add(&mut self, objective: f64, bounds: (f64, f64), integer: bool, kind: VarKind<'a>) -> usize {
@@ -319,6 +325,20 @@ fn season_budget<T: Copy>(rates: &[(&ProductionItem, T)]) -> Option<(f64, Vec<(T
     budget.map(|b| (b, spent))
 }
 
+/// Each season crop with a minimum (see [`crate::models::SeasonTerms::min_plots`]): the plots it
+/// asks for, and every recipe growing it with its rate in `rates` and growing time. A crop's
+/// variants (a roster member's copy, say) share its minimum.
+fn season_min_plots<'a, T: Copy>(rates: &[(&'a ProductionItem, T)]) -> BTreeMap<&'a str, (f64, Vec<(T, f64)>)> {
+    let mut minimums: BTreeMap<&str, (f64, Vec<(T, f64)>)> = BTreeMap::new();
+    for &(recipe, rate) in rates {
+        let Some(terms) = recipe.season.filter(|s| s.min_plots > 0) else { continue };
+        let entry = minimums.entry(crate::models::base_item_name(&recipe.name)).or_default();
+        entry.0 = terms.min_plots as f64;
+        entry.1.push((rate, recipe.production_time));
+    }
+    minimums
+}
+
 /// Builds the model for `items` (production times already set for the Aniimo working them).
 fn build_model<'a>(
     items: &'a [ProductionItem],
@@ -365,6 +385,10 @@ fn build_model<'a>(
     // The season currency the player can spend on seeds a day.
     if let Some((budget, spent)) = season_budget(&rate_of) {
         model.constrain(spent.into_iter().map(|(v, cost)| (v, cost * PACE_UNIT)).collect(), ComparisonOp::Le, budget);
+    }
+    // Plots kept growing a season crop: its rate times its growing time is the plots busy with it.
+    for (min, growing) in season_min_plots(&rate_of).into_values() {
+        model.constrain(growing, ComparisonOp::Ge, min);
     }
 
     // Item balances: made >= used + sold.
@@ -471,6 +495,40 @@ fn build_model<'a>(
         for level in levels {
             let terms: Vec<(usize, f64)> = entries.iter().filter(|(l, _)| *l >= level).map(|(_, v)| (*v, 1.0)).collect();
             model.constrain(terms, ComparisonOp::Le, facility_counts.capacity_at_level(facility, level) as f64);
+        }
+    }
+    // Electric and manual units of a facility on a generator (see `PowerGrid`): `electric` whole
+    // units run on it, the rest are worked by hand, together no more than are owned, and every
+    // electric unit draws its watts from the generator.
+    if let Some(power) = facility_counts.power() {
+        let mut drawn: Vec<(usize, f64)> = Vec::new();
+        for (facility, &watts) in &power.watts {
+            let manual = format!("{facility} (Manual)");
+            let electric_units: Vec<(u32, usize)> = by_facility.get(facility.as_str()).cloned().unwrap_or_default();
+            if electric_units.is_empty() {
+                continue;
+            }
+            let manual_units: Vec<(u32, usize)> = by_facility.get(manual.as_str()).cloned().unwrap_or_default();
+            let owned = facility_counts.get_count(facility) as f64;
+            let electric = model.add(0.0, (0.0, owned), true, VarKind::Electric(facility.clone()));
+            let mut on: Vec<(usize, f64)> = electric_units.iter().map(|&(_, v)| (v, 1.0)).collect();
+            on.push((electric, -1.0));
+            model.constrain(on, ComparisonOp::Le, 0.0);
+            let mut off: Vec<(usize, f64)> = manual_units.iter().map(|&(_, v)| (v, 1.0)).collect();
+            off.push((electric, 1.0));
+            model.constrain(off, ComparisonOp::Le, owned);
+            let mut levels: Vec<u32> = electric_units.iter().chain(&manual_units).map(|(l, _)| *l).collect();
+            levels.sort_unstable();
+            levels.dedup();
+            for level in levels {
+                let terms: Vec<(usize, f64)> =
+                    electric_units.iter().chain(&manual_units).filter(|(l, _)| *l >= level).map(|(_, v)| (*v, 1.0)).collect();
+                model.constrain(terms, ComparisonOp::Le, facility_counts.capacity_at_level(facility, level) as f64);
+            }
+            drawn.push((electric, watts));
+        }
+        if !drawn.is_empty() {
+            model.constrain(drawn, ComparisonOp::Le, power.capacity);
         }
     }
 
@@ -694,6 +752,17 @@ fn build_model<'a>(
         model.objective[v] -= BUILDING_TIE_BREAK * buildings;
         model.tiebreak.push((v, BUILDING_TIE_BREAK * buildings));
     }
+    // Of plans otherwise equal, the most work on electricity (see `PowerGrid`): each electric
+    // unit kept busy is an Aniimo saved.
+    if let Some(power) = facility_counts.power() {
+        for &(recipe, rate) in &rate_of {
+            if power.watts.contains_key(&recipe.facility) {
+                let reward = ELECTRIC_TIE_BREAK * recipe.production_time;
+                model.objective[rate] += reward;
+                model.tiebreak.push((rate, -reward));
+            }
+        }
+    }
     model
 }
 
@@ -762,6 +831,7 @@ pub fn solve_exact(
             if model.integer[i] && !is_integral(v) {
                 let label = match kind {
                     VarKind::Units(r) => format!("units {} ({})", r.name, r.facility),
+                    VarKind::Electric(facility) => format!("electric {facility}"),
                     VarKind::Environment { building, mode, option, .. } => format!("env {building} {mode} {:?}", option.counts),
                     VarKind::EnvironmentPair { buildings, modes, option, .. } => {
                         format!("env pair {}+{} {}+{} at {}", buildings.0, buildings.1, modes.0, modes.1, option.offset)
@@ -1080,6 +1150,12 @@ pub fn check_plan(
             return Err(format!("seeds take {per_day} season currency a day but the budget is {budget}"));
         }
     }
+    for (crop, (min, growing)) in season_min_plots(&rates) {
+        let plots: f64 = growing.iter().map(|(rate, time)| rate * time).sum();
+        if plots < min * (1.0 - TOLERANCE) - TOLERANCE {
+            return Err(format!("{crop} grows on {plots} plots but at least {min} are wanted"));
+        }
+    }
     for (name, &sold) in &plan.sold {
         let item = all.get(name.as_str()).ok_or(format!("unknown item {name}"))?;
         *made.entry(item.name.as_str()).or_default() -= sold;
@@ -1114,6 +1190,23 @@ pub fn check_plan(
             if needed > owned as f64 + TOLERANCE {
                 return Err(format!("{facility}: {needed} units at level {level}+ but {owned} owned"));
             }
+        }
+    }
+    if let Some(power) = facility_counts.power() {
+        let in_use = |facility: &str| units_at.get(facility).map_or(0.0, |e| e.iter().map(|(_, u)| u).sum::<f64>());
+        let mut drawn = 0.0;
+        for (facility, &watts) in &power.watts {
+            // Whole units run on electricity, however much of their time is used.
+            let electric = (in_use(facility) - TOLERANCE).ceil().max(0.0);
+            let manual = in_use(&format!("{facility} (Manual)"));
+            let owned = facility_counts.get_count(facility) as f64;
+            if electric + manual > owned + TOLERANCE {
+                return Err(format!("{facility}: {electric} electric and {manual} manual units but {owned} owned"));
+            }
+            drawn += electric * watts;
+        }
+        if drawn > power.capacity + TOLERANCE {
+            return Err(format!("electric units draw {drawn}W but the generator gives {}W", power.capacity));
         }
     }
     let mut buildings_used: HashMap<&str, u32> = HashMap::new();
@@ -1486,11 +1579,11 @@ pub fn to_production_plan(
     facility_names.sort_unstable();
     facility_names.dedup();
     let mut coin_items: Vec<PlanStep> = Vec::new();
+    // On a generator (see `PowerGrid`), a facility's own rows are its electric units, as many as
+    // it uses, and its "(Manual)" rows are all the rest, idle ones included.
+    let mut electric_used: BTreeMap<&str, u32> = BTreeMap::new();
     for facility in facility_names {
-        let owned = facility_counts.get_count(facility);
-        if owned == 0 {
-            continue;
-        }
+        let mut owned = facility_counts.get_count(facility);
         let grower = is_grower(facility);
         let mut rows: Vec<(&ProductionItem, u32, f64)> = exact
             .units
@@ -1500,6 +1593,23 @@ pub fn to_production_plan(
             .map(|(r, units)| (r, units, exact.recipe_rates.get(&r.name).copied().unwrap_or(0.0)))
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.name.cmp(&b.0.name)));
+        // Recipes taking turns share units, so what's in use is their combined time.
+        let shared: Vec<&str> = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, _)| r.name.as_str()).collect();
+        let shared_time: f64 = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, rate)| rate * r.production_time).sum();
+        let used: u32 = rows.iter().filter(|(r, _, _)| !takes_turns(r)).map(|(_, u, _)| u).sum::<u32>()
+            + ((shared_time - 1e-6).ceil().max(0.0) as u32);
+        let base = facility.strip_suffix(" (Manual)").unwrap_or(facility);
+        if facility_counts.power().is_some_and(|p| p.watts.contains_key(base)) {
+            if base == facility {
+                owned = used.min(owned);
+                electric_used.insert(base, owned);
+            } else {
+                owned = facility_counts.get_count(base).saturating_sub(electric_used.get(base).copied().unwrap_or(0));
+            }
+        }
+        if owned == 0 {
+            continue;
+        }
         if rows.is_empty() {
             coin_items.push(PlanStep {
                 item_name: None,
@@ -1515,11 +1625,6 @@ pub fn to_production_plan(
             });
             continue;
         }
-        // Recipes taking turns share units, so what's in use is their combined time.
-        let shared: Vec<&str> = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, _)| r.name.as_str()).collect();
-        let shared_time: f64 = rows.iter().filter(|(r, _, _)| takes_turns(r)).map(|(r, _, rate)| rate * r.production_time).sum();
-        let used: u32 = rows.iter().filter(|(r, _, _)| !takes_turns(r)).map(|(_, u, _)| u).sum::<u32>()
-            + ((shared_time - 1e-6).ceil().max(0.0) as u32);
         let used = used.min(owned);
         for (recipe, units, rate) in rows {
             let mut reason = uses_of(recipe);

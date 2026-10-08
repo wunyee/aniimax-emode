@@ -319,6 +319,44 @@ fn test_exact_season_currency_budget_caps_seeds() {
     assert!(err.contains("budget"), "{err}");
 }
 
+// A minimum of plots per season crop: with the crops made worth nothing, a plan grows none of them
+// until 2 Moondew Radish and 3 Waxing Moon Pepper plots are asked for out of 6; then it grows
+// exactly those, and the re-check catches a plan that grows less.
+#[test]
+fn test_exact_season_min_plots_keeps_crops_growing() {
+    let Some(mut items) = load_items_with_season() else { return };
+    for item in items.iter_mut().filter(|i| i.name == "moondew_radish" || i.name == "waxing_moon_pepper") {
+        item.sell_value = 0.0;
+    }
+    let counts = FacilityCounts::only(&[("Farmland", 6, 2)]);
+    let modules = ModuleLevels::default();
+    // Both crops take the same time to grow.
+    let grow = items.iter().find(|i| i.name == "moondew_radish").unwrap().production_time;
+    let plots = |plan: &ExactPlan, name: &str| plan.recipe_rates.get(name).copied().unwrap_or(0.0) * grow;
+    let free = solve_and_check(&items, &counts, &modules);
+    assert!(plots(&free, "moondew_radish") + plots(&free, "waxing_moon_pepper") < 1e-9);
+
+    for item in &mut items {
+        let min = match item.name.as_str() {
+            "moondew_radish" => 2,
+            "waxing_moon_pepper" => 3,
+            _ => continue,
+        };
+        item.season.as_mut().unwrap().min_plots = min;
+    }
+    // Not `solve_and_check`: the heuristic planner doesn't keep the minimum, so it earns more.
+    let plan = solve_exact(&items, "coins", &counts, &modules, Goal::Earn { floors: &[] }, None, None).unwrap();
+    assert!(plan.proven_optimal);
+    check_plan(&plan, &items, "coins", &counts, &modules, None).expect("plan passes its re-check");
+    assert!((plots(&plan, "moondew_radish") - 2.0).abs() < 1e-9, "{} radish plots", plots(&plan, "moondew_radish"));
+    assert!((plots(&plan, "waxing_moon_pepper") - 3.0).abs() < 1e-9, "{} pepper plots", plots(&plan, "waxing_moon_pepper"));
+
+    let mut under = plan.clone();
+    under.recipe_rates.insert("waxing_moon_pepper".to_string(), 1.0 / grow);
+    let err = check_plan(&under, &items, "coins", &counts, &modules, None).unwrap_err();
+    assert!(err.contains("at least"), "{err}");
+}
+
 // Points as a priority: every season crop sold raw counts 1, which beats cooking 16 of them into
 // something worth 8 at most, so the most points is all six plots sold raw. The coin plan that has
 // to keep that many points is then the same as the best coin plan.
@@ -513,4 +551,74 @@ fn crew_residents_take_a_whole_aniimo() {
     assert_eq!(sandcastles(&one, &items), 1);
     let (two, items) = solve_with_crew(&counts, crew_of(&[(2, &[("Leisure", 2)])]));
     assert_eq!(sandcastles(&two, &items), 2);
+}
+
+// Three Simmering Pots on a 120W generator (60W each), making one made-up recipe that sells for
+// 1: when an Aniimo works it faster by hand (5s) than electricity does (10s), all three are worked
+// by hand, earning 3/5; when by hand is slower (20s), two run on electricity, all the generator
+// allows, and the third is worked by hand: 2/10 + 1/20; when it's the same either way, two run on
+// electricity too. The re-check catches a plan drawing more
+// than the generator gives.
+#[test]
+fn exact_power_grid_picks_electric_or_manual_units() {
+    use aniimax::models::PowerGrid;
+    let Some(loaded) = load_items() else { return };
+    let base = loaded.iter().find(|i| i.raw_materials.is_none()).unwrap().clone();
+    let recipe = |name: &str, facility: &str, time: f64| ProductionItem {
+        name: name.to_string(),
+        facility: facility.to_string(),
+        raw_materials: None,
+        required_amount: None,
+        cost: None,
+        sell_value: 1.0,
+        sell_currency: "coins".to_string(),
+        production_time: time,
+        yield_amount: 1,
+        facility_level: 1,
+        module_requirement: None,
+        workload: None,
+        emode_base_time: None,
+        byproduct: None,
+        environment: None,
+        season: None,
+        crew: None,
+        ..base.clone()
+    };
+    let mut counts = FacilityCounts::only(&[("Simmering Pot", 3, 1), ("Simmering Pot (Manual)", 3, 1)]);
+    counts.set_power(PowerGrid { watts: [("Simmering Pot".to_string(), 60.0)].into(), capacity: 120.0, ..Default::default() });
+    let modules = ModuleLevels::default();
+    let solve = |items: &[ProductionItem]| {
+        let plan = solve_exact(items, "coins", &counts, &modules, Goal::Earn { floors: &[] }, None, None).unwrap();
+        assert!(plan.proven_optimal);
+        check_plan(&plan, items, "coins", &counts, &modules, None).expect("plan passes its re-check");
+        let rows = to_production_plan(&plan, items, "coins", &counts).coin_items;
+        let units = |facility: &str| rows.iter().filter(|r| r.facility == facility).map(|r| r.facility_count).sum::<u32>();
+        (plan, units("Simmering Pot"), units("Simmering Pot (Manual)"))
+    };
+
+    let fast_by_hand = [recipe("goo", "Simmering Pot", 10.0), recipe("goo__manual", "Simmering Pot (Manual)", 5.0)];
+    let (plan, electric, manual) = solve(&fast_by_hand);
+    assert!((plan.rate_per_second - 3.0 / 5.0).abs() < 1e-9, "{}", plan.rate_per_second);
+    assert_eq!((electric, manual), (0, 3));
+
+    let slow_by_hand = [recipe("goo", "Simmering Pot", 10.0), recipe("goo__manual", "Simmering Pot (Manual)", 20.0)];
+    let (plan, electric, manual) = solve(&slow_by_hand);
+    assert!((plan.rate_per_second - (2.0 / 10.0 + 1.0 / 20.0)).abs() < 1e-9, "{}", plan.rate_per_second);
+    assert_eq!((electric, manual), (2, 1));
+
+    // Just as fast either way: as many run on electricity as the generator allows, each saving
+    // an Aniimo.
+    let same_speed = [recipe("goo", "Simmering Pot", 10.0), recipe("goo__manual", "Simmering Pot (Manual)", 10.0)];
+    let (plan_same, electric, manual) = solve(&same_speed);
+    assert!((plan_same.rate_per_second - 3.0 / 10.0).abs() < 1e-9, "{}", plan_same.rate_per_second);
+    assert_eq!((electric, manual), (2, 1));
+
+    let mut over = plan.clone();
+    over.units.insert("goo".to_string(), 3);
+    over.recipe_rates.insert("goo".to_string(), 3.0 / 10.0);
+    over.units.remove("goo__manual");
+    over.recipe_rates.remove("goo__manual");
+    let err = check_plan(&over, &slow_by_hand, "coins", &counts, &modules, None).unwrap_err();
+    assert!(err.contains("generator"), "{err}");
+
 }

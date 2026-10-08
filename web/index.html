@@ -89,6 +89,18 @@
                         <p class="hint small" id="emode-simple-hint">Auto-balances power within generator limit. Frees Aniimo workers on electric units; remaining units run manually with Aniimo.</p>
                     </div>
                     <p class="hint">Assumes you've built and upgraded everything your RV level allows.</p>
+                    <div class="input-row optional-facilities">
+                        <label class="priority-switch">
+                            <input type="checkbox" role="switch" id="use-aniipod-maker" checked>
+                            <span class="switch-track" aria-hidden="true"></span>
+                            <span>Use Aniipod Maker</span>
+                        </label>
+                        <label class="priority-switch">
+                            <input type="checkbox" role="switch" id="use-dance-pad-polisher" checked>
+                            <span class="switch-track" aria-hidden="true"></span>
+                            <span>Use Dance Pad Polisher</span>
+                        </label>
+                    </div>
                     <details class="explain simple-details">
                         <summary id="simple-summary-title">Facilities and modules</summary>
                         <div id="simple-summary"></div>
@@ -226,6 +238,18 @@
                         <div class="input-field">
                             <label for="season-currency-per-day">Moonray Wheat you can spend on seeds a day</label>
                             <input type="number" id="season-currency-per-day" min="0" placeholder="No limit">
+                        </div>
+                        <p class="assume-title">Season crops to keep growing</p>
+                        <p class="hint small">The fewest Farmland plots to keep growing each season crop, e.g. to find its variants for season quests. Plans grow at least this many, even when something else would earn more.</p>
+                        <div class="input-row">
+                            <div class="input-field">
+                                <label for="season-min-moondew_radish">Moondew Radish</label>
+                                <input type="number" id="season-min-moondew_radish" min="0" step="1" placeholder="0">
+                            </div>
+                            <div class="input-field">
+                                <label for="season-min-waxing_moon_pepper">Waxing Moon Pepper</label>
+                                <input type="number" id="season-min-waxing_moon_pepper" min="0" step="1" placeholder="0">
+                            </div>
                         </div>
                         <p class="assume-title">Recipe Notes</p>
                         <div class="special-grid" id="season-notes"></div>

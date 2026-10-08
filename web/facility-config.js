@@ -153,13 +153,13 @@ export const FACILITIES = [
         tooltip: "Lv.1: Cotton Thread&#10;Lv.2: Woolen Yarn, Cotton Fabric&#10;Lv.3: Palm Rope, Wool Fabric&#10;Lv.4: Dyed Cotton Fabric"
     },
     {
-        name: 'Dance Pad Polisher', slug: 'dance-pad-polisher', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Lightning', powerWatts: 90,
+        name: 'Dance Pad Polisher', slug: 'dance-pad-polisher', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Lightning', supportsEmode: true, powerWatts: 90,
         unlocks: { 1: 2, 2: 5, 3: 7 },
         counts: [0, 1],
         tooltip: "Lv.1: Growth Bud&#10;Lv.2: Growth Flower&#10;Lv.3: Growth Fruit&#10;Makes Aniimo EXP, not Home Coins.&#10;Unlock levels not yet confirmed in game."
     },
     {
-        name: 'Aniipod Maker', slug: 'aniipod-maker', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Lightning', powerWatts: 90,
+        name: 'Aniipod Maker', slug: 'aniipod-maker', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Lightning', supportsEmode: true, powerWatts: 90,
         unlocks: { 1: 3, 2: 6, 3: 9 },
         counts: [0, 0, 1],
         tooltip: "Lv.1: Aniipod&#10;Lv.2: Aniipod Pro&#10;Lv.3: Aniipod Mega&#10;Aniipods are for catching Aniimo, not for selling.&#10;Unlock levels not yet confirmed in game."
@@ -242,6 +242,9 @@ export const SEASON = {
     currency: 'Moonray Wheat',
     points: 'Harvest Moon Points',
     minHomeLevel: 10,
+    // The season's crops, each with a field (`season-min-<name>`) for the fewest Farmland plots
+    // to keep growing it, e.g. to find its variants for season quests.
+    crops: ['moondew_radish', 'waxing_moon_pepper'],
     // Recipes unlocked with Recipe Notes; plans only use the ones the player ticks. The season's
     // other recipes come unlocked.
     recipeNotes: [

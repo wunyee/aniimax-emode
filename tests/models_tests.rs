@@ -318,18 +318,58 @@ fn test_emode_applies_correct_times_and_clears_workload() {
         },
     ];
 
+    // Electricity works at 100% of the supply rate, whatever `emode_base_time` says: an Aniimo at
+    // the level each recipe needs (level 1 here, none listed), so the workload in seconds.
+    let requirements = aniimax::models::AniimoRequirements::default();
     // Case 1: 100% power grid rate (1.0)
-    apply_emode(&mut items, &["Jukebox Dryer".to_string()], 1.0);
-    assert_eq!(items[0].production_time, 54.0);
+    apply_emode(&mut items, &["Jukebox Dryer".to_string()], 1.0, &requirements);
+    assert_eq!(items[0].production_time, 81.0);
     assert_eq!(items[0].workload, None); // Aniimo worker freed!
     // Simmering Pot not in emode_facilities: remains unchanged
     assert_eq!(items[1].production_time, 162.0);
     assert_eq!(items[1].workload, Some(162.0));
 
     // Case 2: 95.5% power grid rate (0.955)
-    apply_emode(&mut items, &["Simmering Pot".to_string()], 0.955);
-    // 108 / 0.955 = ~113.089 seconds (1m 53s in-game)
-    assert!((items[1].production_time - 113.089).abs() < 0.01);
+    apply_emode(&mut items, &["Simmering Pot".to_string()], 0.955, &requirements);
+    // 162 / 0.955 = ~169.63 seconds
+    assert!((items[1].production_time - 162.0 / 0.955).abs() < 1e-9);
     assert_eq!(items[1].workload, None);
 }
 
+
+// Electricity works at 100% (120% at the best supply rate), like an Aniimo at exactly the level a
+// recipe needs: Coarse-Sifted Ore (34 workload, Fire 2, Chimney Kiln) takes 34s, or 28.3s at
+// 120%, against 9.4s for a Fire 3 Aniimo with the Kiln's personality (300% x 1.2 = 360%). At the
+// Aniipod Maker, with no personality, the recipe's base rate counts: an Aniipod Mega (2700, level
+// 3, 1.5 workload a second) takes 1800s, as a level-3 Lightning Aniimo does.
+#[test]
+fn test_emode_seconds_is_100_percent_efficiency() {
+    use aniimax::models::{emode_seconds, Worker};
+    let item = |facility: &str, inputs: bool| ProductionItem {
+        name: "x".to_string(),
+        facility: facility.to_string(),
+        raw_materials: inputs.then(|| vec!["y".to_string()]),
+        required_amount: inputs.then(|| vec![1]),
+        cost: None,
+        sell_value: 1.0,
+        sell_currency: "coins".to_string(),
+        production_time: 1.0,
+        yield_amount: 1,
+        energy: None,
+        facility_level: 1,
+        module_requirement: None,
+        workload: None,
+        emode_base_time: None,
+        byproduct: None,
+        environment: None,
+        season: None,
+        crew: None,
+    };
+    let kiln = item("Chimney Kiln", true);
+    assert!((emode_seconds(&kiln, 34.0, 2, 1.0) - 34.0).abs() < 1e-9);
+    assert!((emode_seconds(&kiln, 34.0, 2, 1.2) - 34.0 / 1.2).abs() < 1e-9);
+    let fire3 = Worker::new(3, true).seconds_for_item(&kiln, 34.0, 2);
+    assert!((fire3 - 34.0 / 3.6).abs() < 1e-9, "{fire3}");
+    let maker = item("Aniipod Maker", true);
+    assert!((emode_seconds(&maker, 2700.0, 3, 1.0) - 1800.0).abs() < 1e-9);
+}

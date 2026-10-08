@@ -8,6 +8,7 @@ import {
     MAX_HOME_LEVEL, ANIIMO_MAX, simpleSetup,
     LEVEL_UP_COSTS, LEVEL_UP_CHAINS, SPECIAL_RECIPES, SEASON, ANIIPOD_TIERS, PERSONALITY_PAIRS, personalityLetter, opposedPersonality,
     FACILITY_POWER_WATTS, DEFAULT_GENERATOR_WATTS, GENERATOR_WATTS_BY_HOME_LEVEL, GENERATOR_CAPACITY_OPTIONS,
+    GENERATOR_POWER_RANGE, POLE_POWER_RANGE, POWER_POLE_COUNTS_BY_RV,
 } from './facility-config.js';
 import { allocateTurnFacilities, redistributeTurnFacilityRows } from './turn-jobs.js';
 import { createShareUrl, readShareHash, urlWithoutShare } from './share-config.js';
@@ -274,7 +275,7 @@ export function getTargetEmodeWatts(generatorCapacity = getGeneratorCapacity(), 
 
 export function autoAllocateEmode(homeLevel, maxWatts = getTargetEmodeWatts(), activeProducingCounts = null) {
     if (homeLevel < 12) return {};
-    const { facilities } = simpleSetup(homeLevel);
+    const { facilities } = chosenSimpleSetup(homeLevel);
     let remainingWatts = maxWatts;
     const allocated = {};
 
@@ -329,6 +330,59 @@ function activeEmodeFacilityCounts(activeProducingCounts = null) {
 
 function activeEmodeFacilities(activeProducingCounts = null) {
     return Object.keys(activeEmodeFacilityCounts(activeProducingCounts));
+}
+
+// In simple mode with E-mode on, the generator for the exact planner to share out: it picks, unit
+// by unit, whether electricity or an Aniimo works each electric facility faster for the plan,
+// within the generator's watts (see `JsPlanInput::power_grid` in wasm.rs). `null` otherwise;
+// the backup planner always goes by `activeEmodeFacilityCounts`.
+function activePowerGrid() {
+    if (!isSimpleMode() || !(document.getElementById('emode-simple-on')?.checked ?? true) || selectedHomeLevel() < 12) return null;
+    const watts = {};
+    for (const name of EMODE_PRIORITY) {
+        if (FACILITY_POWER_WATTS[name] > 0) watts[name] = FACILITY_POWER_WATTS[name];
+    }
+    return { watts, capacity: getTargetEmodeWatts() };
+}
+
+// How many units of each facility a plan works on electricity (`electric`) or by hand: whole
+// units, so recipes taking turns on one count the units their shared time needs.
+function planUnits(plan, electric) {
+    const counts = {};
+    const shared = {};
+    for (const step of plan.coin_items || []) {
+        if (step.status !== 'producing' || !!step.is_emode !== electric || !(FACILITY_POWER_WATTS[step.facility] > 0)) continue;
+        if (takesTurns(step)) shared[step.facility] = (shared[step.facility] || 0) + (step.busy_units ?? step.facility_count);
+        else counts[step.facility] = (counts[step.facility] || 0) + step.facility_count;
+    }
+    for (const [facility, busy] of Object.entries(shared)) {
+        counts[facility] = (counts[facility] || 0) + Math.ceil(busy - 1e-6);
+    }
+    return counts;
+}
+
+function planEmodeCounts(plan) {
+    return planUnits(plan, true);
+}
+
+// After the exact planner has put on electricity every unit that's no slower on it, the watts
+// left go to units the plan works by hand, in `EMODE_PRIORITY` order, each saving an Aniimo even
+// if it runs slower. The electric units per facility, or `null` if nothing more fits.
+function fillGenerator(plan, grid) {
+    const counts = planEmodeCounts(plan);
+    const manual = planUnits(plan, false);
+    let left = grid.capacity - Object.entries(counts).reduce((sum, [name, n]) => sum + n * (grid.watts[name] || 0), 0);
+    let added = false;
+    for (const name of EMODE_PRIORITY) {
+        const watts = grid.watts[name];
+        if (!(watts > 0)) continue;
+        for (let free = manual[name] || 0; free > 0 && left >= watts; free--) {
+            counts[name] = (counts[name] || 0) + 1;
+            left -= watts;
+            added = true;
+        }
+    }
+    return added ? counts : null;
 }
 
 function calculatePowerWatts(counts) {
@@ -664,7 +718,8 @@ function getPersistedFieldIds() {
         'rate-unit', 'season-on', 'layout-sim-on', 'season-currency-per-day',
         'aniimo-best', 'aniimo-minimum', 'aniimo-custom',
         'power-grid-rate', 'emode-simple-on', 'simple-power-grid-rate',
-        'generator-capacity', 'simple-generator-capacity'
+        'generator-capacity', 'simple-generator-capacity', 'use-aniipod-maker', 'use-dance-pad-polisher',
+        ...SEASON.crops.map(crop => `season-min-${crop}`)
     ];
 }
 
@@ -885,10 +940,27 @@ function populateHomeLevels() {
     }
 }
 
+// Facilities a player may leave out of simple mode's plans, each with its switch: they make
+// Aniipods and Growth items, which a player may rather make by hand. In a plan they also draw
+// generator power like any other electric facility.
+const OPTIONAL_FACILITIES = [
+    { name: 'Aniipod Maker', id: 'use-aniipod-maker' },
+    { name: 'Dance Pad Polisher', id: 'use-dance-pad-polisher' },
+];
+
+// `simpleSetup`, less any optional facility switched off.
+function chosenSimpleSetup(homeLevel) {
+    const setup = simpleSetup(homeLevel);
+    for (const { name, id } of OPTIONAL_FACILITIES) {
+        if (document.getElementById(id)?.checked === false) setup.facilities[name] = [{ count: 0, level: 1 }];
+    }
+    return setup;
+}
+
 // One entry per built facility, e.g. "10 Farmland Lv.2".
 function renderSimpleSummary() {
     const homeLevel = selectedHomeLevel();
-    const { facilities, modules } = simpleSetup(homeLevel);
+    const { facilities, modules } = chosenSimpleSetup(homeLevel);
     const chip = (count, name, level) => `
         <div class="chip"><span><span class="chip-count">${count}</span> ${name}</span>${level ? `<span class="chip-level">${level}</span>` : ''}</div>`;
     const built = FACILITIES
@@ -932,7 +1004,7 @@ function applyConfigMode() {
 
 // Fills the advanced inputs with everything `homeLevel` allows.
 function fillAdvancedFrom(homeLevel) {
-    const { facilities, modules } = simpleSetup(homeLevel);
+    const { facilities, modules } = chosenSimpleSetup(homeLevel);
     FACILITIES.forEach(f => {
         facilityTiers[f.name] = facilities[f.name].map(t => ({ ...t }));
         renderTierRows(f.name);
@@ -949,6 +1021,9 @@ function fillAdvancedFrom(homeLevel) {
 function attachModeHandlers() {
     document.getElementById('mode-simple').addEventListener('change', applyConfigMode);
     document.getElementById('mode-advanced').addEventListener('change', applyConfigMode);
+    for (const { id } of OPTIONAL_FACILITIES) {
+        document.getElementById(id).addEventListener('change', renderSimpleSummary);
+    }
     document.getElementById('home-level').addEventListener('change', () => {
         renderSimpleSummary();
         renderStrategy();
@@ -1030,7 +1105,7 @@ const tierLevel = tiers => Math.max(0, ...(tiers || []).filter(t => t.count > 0)
 // mode, where the player enters what they have rather than their RV level.
 function homeLevelCovering(input) {
     for (let level = 1; level <= MAX_HOME_LEVEL; level++) {
-        const allowed = simpleSetup(level);
+        const allowed = chosenSimpleSetup(level);
         const facilitiesFit = FACILITIES.every(f => {
             const have = input.facilities[f.name];
             if (tierCount(have) === 0) return true;
@@ -1118,7 +1193,7 @@ function improvementCandidates(base, setup) {
     // Advanced mode: a module at a higher level, one more facility, or one facility at a higher
     // level, within what the RV level covering the rest allows.
     if (planContext && !planContext.simple) {
-        const allowed = simpleSetup(homeLevelCovering(base));
+        const allowed = chosenSimpleSetup(homeLevelCovering(base));
         for (const [module, level] of Object.entries(base.modules)) {
             for (const next of levelsAbove(level, allowed.modules[module] ?? 0)) {
                 candidates.push({
@@ -2334,6 +2409,17 @@ function seasonCurrencyPerDay() {
     return value !== '' && Number(value) >= 0 ? Number(value) : null;
 }
 
+// The fewest Farmland plots to keep growing each season crop, by crop name; blank or 0 leaves a
+// crop to the plan (see `JsPlanInput::season_min_plots` in wasm.rs).
+function seasonMinPlots() {
+    const minimums = {};
+    for (const crop of SEASON.crops) {
+        const plots = Math.floor(Number(document.getElementById(`season-min-${crop}`).value));
+        if (plots > 0) minimums[crop] = plots;
+    }
+    return minimums;
+}
+
 function seasonAvailable() {
     return !isSimpleMode() || selectedHomeLevel() >= SEASON.minHomeLevel;
 }
@@ -2712,7 +2798,7 @@ function attachPriorityHandlers() {
 // catches better, so the strategy makes only this one.
 function bestAniipod() {
     const tiers = isSimpleMode()
-        ? simpleSetup(selectedHomeLevel()).facilities['Aniipod Maker']
+        ? chosenSimpleSetup(selectedHomeLevel()).facilities['Aniipod Maker']
         : facilityTiers['Aniipod Maker'];
     const level = Math.max(0, ...(tiers || []).filter(t => t.count > 0).map(t => t.level));
     return level > 0 ? ANIIPOD_TIERS[Math.min(level, ANIIPOD_TIERS.length) - 1] : null;
@@ -3003,7 +3089,7 @@ function getPlanInputValues(activeProducingCounts = null) {
     // `attachFacilityTierHandlers`), sent straight through as a list of tiers per facility; see
     // `JsPlanInput::facilities` in wasm.rs for the shape (`[{count, level}, ...]` per facility).
     if (isSimpleMode()) {
-        const { facilities, modules } = simpleSetup(selectedHomeLevel());
+        const { facilities, modules } = chosenSimpleSetup(selectedHomeLevel());
         return {
             currency: 'coins',
             priorities: activePriorities(),
@@ -3012,9 +3098,11 @@ function getPlanInputValues(activeProducingCounts = null) {
             exclude: excludedRecipes(),
             season: seasonActive(),
             season_currency_per_day: seasonCurrencyPerDay(),
+            season_min_plots: seasonActive() ? seasonMinPlots() : {},
             emode_facilities: activeEmodeFacilities(activeProducingCounts),
             emode_facility_counts: activeEmodeFacilityCounts(activeProducingCounts),
             power_grid_rate: getPowerGridRate(),
+            power_grid: activePowerGrid(),
             facilities,
             modules
         };
@@ -3043,6 +3131,7 @@ function getPlanInputValues(activeProducingCounts = null) {
         exclude: excludedRecipes(),
         season: seasonActive(),
         season_currency_per_day: seasonCurrencyPerDay(),
+        season_min_plots: seasonActive() ? seasonMinPlots() : {},
         emode_facilities: activeEmodeFacilities(),
         emode_facility_counts: activeEmodeFacilityCounts(),
         power_grid_rate: getPowerGridRate(),
@@ -3888,6 +3977,229 @@ function renderEnvironmentDiagram(layout, mode, building, rows = [], unit = null
     `;
 }
 
+// --- Electricity map ---------------------------------------------------------------------
+// The generator's own map in "What Each Facility Should Do", drawn like an environment
+// building's: the Crackle Generator in the middle of its 11x11 range, each electric unit touching
+// that range, and where they don't all fit, Crackle Power Poles, each touching a range already
+// powered and adding its own 7x7 around it. As in the game, any part of a unit inside a range
+// powers it. Positions are a suggestion, in game
+// tiles; facilities are their footprints from FACILITY_FOOTPRINTS.
+
+const POWER_GENERATOR_COLOR = '#06b6d4';
+const POWER_COVERAGE_COLOR = '#facc15';
+const POWER_POLE_COLOR = '#eab308';
+const POWER_GENERATOR_SIZE = 2;
+const POWER_POLE_SIZE = 1.5;
+// One colour per electric facility type, in `EMODE_PRIORITY` order, so neighbours tell apart.
+const POWER_FACILITY_PALETTE = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60a5fa', '#fb923c', '#2dd4bf',
+    '#e879f9', '#a3e635', '#f87171', '#38bdf8', '#fde047', '#c084fc', '#4ade80'];
+const powerFacilityColor = name => POWER_FACILITY_PALETTE[Math.max(0, EMODE_PRIORITY.indexOf(name)) % POWER_FACILITY_PALETTE.length];
+
+// Places `units` (`{ facility, w, h, label }`, biggest first) around a generator whose range is
+// (0,0)-(11,11), with up to `maxPoles` poles: `{ generator, ranges, poles, placed, unplaced }`.
+// Works on a quarter-tile grid, as facilities snap to quarter tiles.
+function planPowerLayout(units, maxPoles) {
+    const Q = 4;
+    const MIN = -24;
+    const MAX = 35;
+    const N = (MAX - MIN) * Q;
+    const powered = new Uint8Array(N * N);
+    const used = new Uint8Array(N * N);
+    const cell = v => Math.round((v - MIN) * Q);
+    const mark = (grid, x, y, w, h) => {
+        for (let cy = Math.max(0, cell(y)); cy < Math.min(N, cell(y + h)); cy++) {
+            for (let cx = Math.max(0, cell(x)); cx < Math.min(N, cell(x + w)); cx++) grid[cy * N + cx] = 1;
+        }
+    };
+    // Free ground for the whole footprint, and power under some part of it.
+    const fits = (x, y, w, h) => {
+        if (x < MIN || y < MIN || x + w > MAX || y + h > MAX) return false;
+        let touches = false;
+        for (let cy = cell(y); cy < cell(y + h); cy++) {
+            for (let cx = cell(x); cx < cell(x + w); cx++) {
+                const i = cy * N + cx;
+                if (used[i]) return false;
+                if (powered[i]) touches = true;
+            }
+        }
+        return touches;
+    };
+    const range = GENERATOR_POWER_RANGE;
+    const generator = { x: (range - POWER_GENERATOR_SIZE) / 2, y: (range - POWER_GENERATOR_SIZE) / 2, w: POWER_GENERATOR_SIZE, h: POWER_GENERATOR_SIZE };
+    const ranges = [{ kind: 'generator', x: 0, y: 0, size: range }];
+    mark(powered, 0, 0, range, range);
+    mark(used, generator.x, generator.y, generator.w, generator.h);
+    const bounds = { x0: 0, y0: 0, x1: range, y1: range };
+    const center = { x: range / 2, y: range / 2 };
+    // The free spot nearest the generator for a `w` x `h` unit touching power, or null.
+    const spotFor = (w, h) => {
+        let best = null;
+        for (let y = bounds.y0 - h + 1 / Q; y < bounds.y1; y += 1 / Q) {
+            for (let x = bounds.x0 - w + 1 / Q; x < bounds.x1; x += 1 / Q) {
+                if (!fits(x, y, w, h)) continue;
+                const d = Math.hypot(x + w / 2 - center.x, y + h / 2 - center.y);
+                if (!best || d < best.d) best = { x, y, d };
+            }
+        }
+        return best;
+    };
+    const poles = [];
+    // A pole where its 7x7 powers the most ground not powered yet (ties: nearest the generator).
+    const addPole = () => {
+        const half = POLE_POWER_RANGE / 2;
+        let best = null;
+        for (let y = bounds.y0 - POWER_POLE_SIZE + 1 / Q; y < bounds.y1; y += 1 / Q) {
+            for (let x = bounds.x0 - POWER_POLE_SIZE + 1 / Q; x < bounds.x1; x += 1 / Q) {
+                if (!fits(x, y, POWER_POLE_SIZE, POWER_POLE_SIZE)) continue;
+                const cx = x + POWER_POLE_SIZE / 2;
+                const cy = y + POWER_POLE_SIZE / 2;
+                let gain = 0;
+                for (let gy = Math.max(0, cell(cy - half)); gy < Math.min(N, cell(cy + half)); gy++) {
+                    for (let gx = Math.max(0, cell(cx - half)); gx < Math.min(N, cell(cx + half)); gx++) {
+                        if (!powered[gy * N + gx]) gain++;
+                    }
+                }
+                const d = Math.hypot(cx - center.x, cy - center.y);
+                if (!best || gain > best.gain || (gain === best.gain && d < best.d)) best = { x, y, cx, cy, gain, d };
+            }
+        }
+        if (!best || best.gain === 0) return false;
+        poles.push({ x: best.x, y: best.y, w: POWER_POLE_SIZE, h: POWER_POLE_SIZE });
+        mark(used, best.x, best.y, POWER_POLE_SIZE, POWER_POLE_SIZE);
+        const r = { kind: 'pole', x: best.cx - half, y: best.cy - half, size: POLE_POWER_RANGE };
+        ranges.push(r);
+        mark(powered, r.x, r.y, r.size, r.size);
+        bounds.x0 = Math.min(bounds.x0, r.x);
+        bounds.y0 = Math.min(bounds.y0, r.y);
+        bounds.x1 = Math.max(bounds.x1, r.x + r.size);
+        bounds.y1 = Math.max(bounds.y1, r.y + r.size);
+        return true;
+    };
+    const placed = [];
+    const unplaced = [];
+    for (const unit of units) {
+        let spot = spotFor(unit.w, unit.h);
+        while (!spot && poles.length < maxPoles && addPole()) spot = spotFor(unit.w, unit.h);
+        if (!spot) {
+            unplaced.push(unit);
+            continue;
+        }
+        placed.push({ ...unit, x: spot.x, y: spot.y });
+        mark(used, spot.x, spot.y, unit.w, unit.h);
+    }
+    return { generator, ranges, poles, placed, unplaced };
+}
+
+// The electric units `rows` (a plan's producing E-mode rows) take, one per physical unit, each
+// labelled with what it makes: recipes taking turns on a unit share its label.
+function powerUnits(plan, rows) {
+    const counts = planEmodeCounts(plan);
+    const units = [];
+    for (const [facility, count] of Object.entries(counts)) {
+        const [w, h] = FACILITY_FOOTPRINTS[facility] || [2, 2];
+        const own = rows.filter(r => r.facility === facility);
+        const shared = own.filter(takesTurns).map(r => prettyItem(r.item_name));
+        const queue = own.filter(r => !takesTurns(r)).map(r => ({ item: prettyItem(r.item_name), left: r.facility_count }));
+        for (let i = 0; i < count; i++) {
+            while (queue.length && queue[0].left <= 0) queue.shift();
+            let items = shared;
+            if (queue.length) {
+                items = [queue[0].item];
+                queue[0].left--;
+            }
+            units.push({ facility, w, h, items, label: items.join(' / ') });
+        }
+    }
+    return units.sort((a, b) => b.w * b.h - a.w * a.h || a.facility.localeCompare(b.facility));
+}
+
+function renderPowerDiagram(map) {
+    const xs = map.ranges.flatMap(r => [r.x, r.x + r.size]);
+    const ys = map.ranges.flatMap(r => [r.y, r.y + r.size]);
+    const margin = 1;
+    const x0 = Math.floor(Math.min(...xs)) - margin;
+    const y0 = Math.floor(Math.min(...ys)) - margin;
+    const width = Math.ceil(Math.max(...xs)) + margin - x0;
+    const height = Math.ceil(Math.max(...ys)) + margin - y0;
+    const gridLines = [];
+    for (let t = x0; t <= x0 + width; t++) gridLines.push(`<line class="tile${t % 2 === 0 ? ' major' : ''}" x1="${t}" y1="${y0}" x2="${t}" y2="${y0 + height}" />`);
+    for (let t = y0; t <= y0 + height; t++) gridLines.push(`<line class="tile${t % 2 === 0 ? ' major' : ''}" x1="${x0}" y1="${t}" x2="${x0 + width}" y2="${t}" />`);
+    const colorOf = () => POWER_COVERAGE_COLOR;
+    const rangeRects = map.ranges.map(r => `<rect x="${r.x}" y="${r.y}" width="${r.size}" height="${r.size}" fill="${colorOf(r)}" fill-opacity="0.08" />`).join('');
+    const rangeEdges = map.ranges.map(r => `<rect x="${r.x}" y="${r.y}" width="${r.size}" height="${r.size}" fill="none"
+        stroke="${colorOf(r)}" stroke-opacity="0.9" stroke-dasharray="0.35,0.25" stroke-width="0.1" />`).join('');
+    // Each pole is wired to the generator or the pole it hangs off: the nearest node before it.
+    const centerOf = m => ({ x: m.x + m.w / 2, y: m.y + m.h / 2 });
+    const nodes = [centerOf(map.generator)];
+    const cables = map.poles.map(pole => {
+        const c = centerOf(pole);
+        const from = nodes.reduce((a, b) => (Math.hypot(b.x - c.x, b.y - c.y) < Math.hypot(a.x - c.x, a.y - c.y) ? b : a));
+        nodes.push(c);
+        return `<line x1="${from.x}" y1="${from.y}" x2="${c.x}" y2="${c.y}" stroke="${POWER_GENERATOR_COLOR}" stroke-width="0.12" stroke-dasharray="0.4,0.2" stroke-opacity="0.8" />`;
+    }).join('');
+    const facilities = [...new Set(map.placed.map(u => u.facility))];
+    const inset = 0.06;
+    const units = map.placed.map(u => {
+        const color = powerFacilityColor(u.facility);
+        const number = facilities.indexOf(u.facility) + 1;
+        const size = Math.min(0.9, Math.min(u.w, u.h) * 0.45);
+        return `<g class="env-plot" ${tipAttrs(u.facility, { detail: u.label, stats: `${FACILITY_POWER_WATTS[u.facility] || 0}W`, color })}>
+            <rect x="${u.x + inset}" y="${u.y + inset}" width="${u.w - inset * 2}" height="${u.h - inset * 2}" rx="0.25" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="0.06" />
+            <text x="${u.x + u.w / 2}" y="${u.y + u.h / 2}" font-size="${size.toFixed(2)}">${number}</text></g>`;
+    }).join('');
+    const g = map.generator;
+    const generator = `<g class="env-building" ${tipAttrs('Crackle Generator', { detail: `${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE} range`, color: POWER_GENERATOR_COLOR })}>
+        <rect x="${g.x + 0.05}" y="${g.y + 0.05}" width="${g.w - 0.1}" height="${g.h - 0.1}" rx="0.3" fill="${POWER_GENERATOR_COLOR}" stroke="currentColor" stroke-opacity="0.6" stroke-width="0.08" />
+        <text x="${g.x + g.w / 2}" y="${g.y + g.h / 2}" font-size="1.1" class="power-bolt">⚡</text></g>`;
+    const poles = map.poles.map((p, i) => `<g class="env-building" ${tipAttrs('Crackle Power Pole', { detail: `#${i + 1} · ${POLE_POWER_RANGE}×${POLE_POWER_RANGE} range`, color: POWER_POLE_COLOR })}>
+        <rect x="${p.x + 0.05}" y="${p.y + 0.05}" width="${p.w - 0.1}" height="${p.h - 0.1}" rx="0.25" fill="${POWER_POLE_COLOR}" stroke="currentColor" stroke-opacity="0.6" stroke-width="0.08" />
+        <text x="${p.x + p.w / 2}" y="${p.y + p.h / 2}" font-size="0.8" class="power-bolt">⚡</text></g>`).join('');
+
+    const swatch = (color, label) => `
+        <span class="env-legend-item"><span class="env-legend-swatch coverage" style="background:${color}33;border-color:${color}"></span>${label}</span>`;
+    const colon = currentLocale() === 'zh-TW' ? '：' : ': ';
+    const legend = [swatch(POWER_COVERAGE_COLOR, `<span class="power-legend-text"><span>Power coverage</span>&nbsp;(${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE})</span>`)]
+        .concat(map.poles.length ? [swatch(POWER_COVERAGE_COLOR, `<span class="power-legend-text"><span>Power pole coverage</span>&nbsp;(${POLE_POWER_RANGE}×${POLE_POWER_RANGE}) ×${map.poles.length}</span>`)] : [])
+        // Each line starts with the number its units carry in the map.
+        .concat(facilities.map((facility, i) => {
+            const mine = map.placed.filter(u => u.facility === facility);
+            const items = [...new Set(mine.flatMap(u => u.items))];
+            const made = items.length ? `${colon}${items.map(item => `<span>${item}</span>`).join(' / ')}` : '';
+            return `
+        <span class="env-legend-item"><span class="env-legend-swatch" style="background:${powerFacilityColor(facility)}"></span><span class="power-legend-text"><b>${i + 1}</b>&nbsp;<span>${facility}</span>&nbsp;×${mine.length} · ${(FACILITY_POWER_WATTS[facility] || 0) * mine.length}W${made}</span></span>`;
+        })).join('');
+    return `
+        <div class="env-diagram power-diagram">
+            <svg viewBox="${x0} ${y0} ${width} ${height}" role="img" aria-label="Crackle Generator layout">
+                <g class="env-grid">${gridLines.join('')}</g>
+                ${rangeRects}${cables}${units}${rangeEdges}${generator}${poles}
+            </svg>
+            <div class="env-legend">${legend}</div>
+        </div>`;
+}
+
+// The generator's section: its map next to a table of every unit running on it.
+function powerSection(plan, rows) {
+    if (rows.length === 0) return '';
+    const map = planPowerLayout(powerUnits(plan, rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0);
+    const used = map.placed.concat(map.unplaced).reduce((sum, u) => sum + (FACILITY_POWER_WATTS[u.facility] || 0), 0);
+    const cap = getTargetEmodeWatts();
+    const supply = getPowerGridRate() >= 1.15 ? ' · 120% supply' : '';
+    const missing = map.unplaced.length
+        ? `<p class="hint small">Didn't fit in range: ${map.unplaced.map(u => u.facility).join(', ')}. Place them within reach of another power pole.</p>`
+        : '';
+    return `
+        <div class="facility-category">
+            <h4 class="facility-category-title"><span>Crackle Generator</span> <span class="env-mode-tag" style="--tint:${POWER_GENERATOR_COLOR}">⚡ ${used}W / ${cap}W${supply}</span></h4>
+            <p class="hint small">A suggested placement: every electric unit at least partly inside the generator's ${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE} range or a power pole's ${POLE_POWER_RANGE}×${POLE_POWER_RANGE}, each pole partly inside a range already powered.</p>
+            ${missing}
+            <div class="env-unit">
+                ${renderPowerDiagram(map)}
+                <div class="env-unit-table">${facilityPlanTable(rows)}</div>
+            </div>
+        </div>`;
+}
+
 // Renders `plan.coin_items` (one row per facility+product; see `PlanStep` in models.rs). Rows
 // for a crop that needs a growing environment (Cool/Warm/Freeze/Scorching/Adequate) are pulled
 // out into their own "Environment: X" group first; regardless of whether they're grown on
@@ -3956,8 +4268,32 @@ function renderFacilityPlan(plan) {
         `;
     }).join('');
 
+    // A crop grown without the environment it wants (see `add_uncovered_variants` in models.rs)
+    // is listed with that environment's building, so its plots there and outside add up to the
+    // crop's total; it's taken out of its category below.
+    const outsideOf = new Map();
+    ungatedSteps.forEach(step => {
+        const wants = /grown without (\w+) at \d+% speed/.exec(step.reason || '')?.[1];
+        if (!wants || !singles.some(s => s.mode === wants)) return;
+        if (!outsideOf.has(wants)) outsideOf.set(wants, []);
+        outsideOf.get(wants).push(step);
+    });
+
     const modeSections = ENVIRONMENT_MODE_ORDER.map(mode => {
         const units = singles.filter(s => s.mode === mode).map(s => s.unit);
+        // Plots of this mode's rows that no building's map took, if any, so none go missing.
+        const placedPlots = {};
+        units.forEach(u => u.rows.forEach(r => {
+            placedPlots[`${r.facility}|${r.item_name}`] = (placedPlots[`${r.facility}|${r.item_name}`] || 0) + r.facility_count;
+        }));
+        const unplacedRows = (envGroups.get(mode) || [])
+            .map(step => ({ ...step, facility_count: step.facility_count - (placedPlots[`${step.facility}|${step.item_name}`] || 0) }))
+            .filter(step => step.facility_count > 0);
+        const extras = [
+            unplacedRows.length ? { label: 'Not on the map above', rows: unplacedRows } : null,
+            outsideOf.has(mode) ? { label: 'Outside the coverage, growing more slowly', rows: outsideOf.get(mode) } : null,
+        ].filter(Boolean);
+        const extraTable = units.length && extras.length ? facilityPlanTableOf(extras) : '';
         if (units.length === 0) {
             // Crops wanting this mode that no building's map accounted for, if any: the units
             // hold copies of each row, so compare by how many plots each one placed.
@@ -3981,7 +4317,7 @@ function renderFacilityPlan(plan) {
                     ${units.length > 1 ? `<p class="hint small">${unit.building} ${i + 1}</p>` : ''}
                     <div class="env-unit">
                         ${renderEnvironmentDiagram(unit.layout, mode, unit.building, unit.rows, unit)}
-                        <div class="env-unit-table">${facilityPlanTable(unit.rows)}</div>
+                        <div class="env-unit-table">${facilityPlanTable(unit.rows)}${i === units.length - 1 ? extraTable : ''}</div>
                     </div>
                 `).join('')}
             </div>
@@ -3989,8 +4325,13 @@ function renderFacilityPlan(plan) {
     }).join('');
     const environmentSections = pairSections + modeSections;
 
+    // Units on electricity get the generator's own section and map.
+    const electricSteps = ungatedSteps.filter(step => step.is_emode && step.status === 'producing');
+    const powerSections = powerSection(plan, electricSteps);
+
     const byCategory = new Map(FACILITY_CATEGORIES.map(c => [c, []]));
-    ungatedSteps.forEach(step => {
+    const outside = [...outsideOf.values()].flat();
+    ungatedSteps.filter(step => !electricSteps.includes(step) && !outside.includes(step)).forEach(step => {
         const category = FACILITY_CATEGORY_BY_NAME.get(step.facility) || 'Materials Processing';
         byCategory.get(category).push(step);
     });
@@ -4006,7 +4347,7 @@ function renderFacilityPlan(plan) {
         `;
     }).join('');
 
-    container.innerHTML = environmentSections + categorySections;
+    container.innerHTML = environmentSections + powerSections + categorySections;
 }
 
 // Re-renders "Your Rate" from `lastPlan` at whichever unit is currently selected in the
@@ -4231,6 +4572,12 @@ async function runFindPlan() {
     if (pendingWorkerRequests.size > 0) restartWorker();
     try {
         const input = getPlanInputValues();
+        const farmland = (input.facilities['Farmland'] || []).reduce((sum, t) => sum + t.count, 0);
+        const wanted = Object.values(input.season_min_plots).reduce((sum, plots) => sum + plots, 0);
+        if (wanted > farmland) {
+            throw new Error(translate(`Season crops to keep growing take {wanted} Farmland plots, but you have {farmland}.`)
+                .replace('{wanted}', wanted).replace('{farmland}', farmland));
+        }
         lastPlanInput = input;
         planContext = {
             levelUp: isLevelUpStrategy(),
@@ -4270,7 +4617,26 @@ async function runFindPlan() {
 
         // Smart E-mode reallocation: if some electrified units are idle while other units are producing manually,
         // reclaim the idle watts and re-solve to electrify active units and free more Aniimo!
-        if (isSimpleMode() && (document.getElementById('emode-simple-on')?.checked ?? true) && selectedHomeLevel() >= 12 && bestPlan.success) {
+        // With a generator to share out, the exact planner picked the units no slower on
+        // electricity; the watts left go to units it works by hand (see `fillGenerator`), and the
+        // plan is solved again with those fixed on electricity.
+        // A solve can leave some of those units idle, so their watts are offered again, a few
+        // rounds at most.
+        const pickedPower = !!input.power_grid;
+        const grid = input.power_grid;
+        for (let round = 0; pickedPower && round < 3 && bestPlan.success; round++) {
+            const filled = fillGenerator(bestPlan, grid);
+            if (!filled || JSON.stringify(filled) === JSON.stringify(input.emode_facility_counts)) break;
+            const retry = { ...input, power_grid: null, emode_facility_counts: filled, emode_facilities: Object.keys(filled) };
+            const retryPlan = JSON.parse(await callWorker('find_plan', JSON.stringify({ ...retry, aniimo: bestSetup })));
+            if (runId !== planRunId) return;
+            if (!retryPlan.success) break;
+            Object.assign(input, retry);
+            bestPlan = retryPlan;
+        }
+
+        // Not needed when the exact planner picked the electric units itself (`power_grid`).
+        if (!pickedPower && isSimpleMode() && (document.getElementById('emode-simple-on')?.checked ?? true) && selectedHomeLevel() >= 12 && bestPlan.success) {
             const producingCounts = {};
             for (const step of bestPlan.coin_items || []) {
                 if (step.status === 'producing' && step.facility) {
@@ -4301,6 +4667,9 @@ async function runFindPlan() {
                 }
             }
         }
+
+        // The layout and the power gauge show the units the plan runs on electricity.
+        if (pickedPower && bestPlan.success) input.emode_facility_counts = planEmodeCounts(bestPlan);
 
         finishSolveSteps();
         plansBySetup[bestSetup] = bestPlan;

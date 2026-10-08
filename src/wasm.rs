@@ -771,6 +771,10 @@ pub struct JsPlanInput {
     /// seeds; `None` for no limit.
     #[serde(default)]
     pub season_currency_per_day: Option<f64>,
+    /// During the season, the fewest plots to keep growing each season crop, by crop name (see
+    /// [`crate::models::SeasonTerms::min_plots`]).
+    #[serde(default)]
+    pub season_min_plots: std::collections::BTreeMap<String, u32>,
     /// Facilities operating in E-mode (Electric mode), by facility name.
     #[serde(default)]
     pub emode_facilities: Vec<String>,
@@ -780,6 +784,19 @@ pub struct JsPlanInput {
     /// Power grid supply rate (e.g. 1.0 for 100%, 1.2 for 120%, 0.955 for 95.5%). Defaults to 1.0.
     #[serde(default = "default_power_grid_rate")]
     pub power_grid_rate: f64,
+    /// The generator, when the exact planner should pick which units run on it (see
+    /// [`crate::models::PowerGrid`]); `emode_facility_counts` is then only for the backup planner.
+    #[serde(default)]
+    pub power_grid: Option<JsPowerGrid>,
+}
+
+/// See [`JsPlanInput::power_grid`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsPowerGrid {
+    /// Watts each electric unit draws, by facility.
+    pub watts: std::collections::BTreeMap<String, f64>,
+    /// The most watts all electric units together may draw.
+    pub capacity: f64,
 }
 
 fn default_power_grid_rate() -> f64 {
@@ -1348,7 +1365,7 @@ impl JsProductionPlan {
 /// doesn't block anything else from rendering.
 #[wasm_bindgen]
 pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> String {
-    let prepared = match PreparedInput::from_json(input_json) {
+    let prepared = match PreparedInput::from_json(input_json, false) {
         Ok(p) => p,
         Err(error) => return error,
     };
@@ -1383,7 +1400,7 @@ pub fn find_plan(input_json: &str, on_progress: Option<js_sys::Function>) -> Str
 /// Empty when byproducts aren't prioritized.
 #[wasm_bindgen]
 pub fn exact_byproduct_problems(input_json: &str) -> String {
-    let Ok(prepared) = PreparedInput::from_json(input_json) else { return "[]".to_string() };
+    let Ok(prepared) = PreparedInput::from_json(input_json, true) else { return "[]".to_string() };
     if !prepared.input.prioritize_byproducts || prepared.input.currency != "coins" || prepared.input.level_up.is_some() {
         return "[]".to_string();
     }
@@ -1410,7 +1427,7 @@ pub fn exact_byproduct_problems(input_json: &str) -> String {
 #[wasm_bindgen]
 pub fn exact_priority_problem(input_json: &str, stage_json: &str, target: &str) -> String {
     let stage: JsStage = serde_json::from_str(stage_json).unwrap_or_default();
-    let lp = match PreparedInput::from_json(input_json) {
+    let lp = match PreparedInput::from_json(input_json, true) {
         Ok(prepared) => crate::exact::write_lp(
             &prepared.items,
             target,
@@ -1429,7 +1446,7 @@ pub fn exact_priority_problem(input_json: &str, stage_json: &str, target: &str) 
 /// `lp` is empty for the coins strategy, or when the stock already covers the level-up.
 #[wasm_bindgen]
 pub fn exact_level_up_problem(input_json: &str) -> String {
-    let lp = match PreparedInput::from_json(input_json) {
+    let lp = match PreparedInput::from_json(input_json, true) {
         Ok(prepared) => match &prepared.input.level_up {
             Some(level_up) if prepared.input.currency == "coins" && !level_up.ready() => crate::exact::write_lp(
                 &prepared.items,
@@ -1483,7 +1500,7 @@ impl JsStage {
 #[wasm_bindgen]
 pub fn exact_problem(input_json: &str, stage_json: &str) -> String {
     let stage: JsStage = serde_json::from_str(stage_json).unwrap_or_default();
-    let lp = match PreparedInput::from_json(input_json) {
+    let lp = match PreparedInput::from_json(input_json, true) {
         Ok(prepared) if !prepared.input.currency.is_empty() => crate::exact::write_lp(
             &prepared.items,
             &prepared.input.currency,
@@ -1516,7 +1533,7 @@ struct JsSolverResult {
 /// returns, plus whether it's proven optimal.
 #[wasm_bindgen]
 pub fn exact_plan(input_json: &str, stage_json: &str, solution_json: &str) -> String {
-    let prepared = match PreparedInput::from_json(input_json) {
+    let prepared = match PreparedInput::from_json(input_json, true) {
         Ok(p) => p,
         Err(error) => return error,
     };
@@ -1642,9 +1659,11 @@ struct PreparedInput {
 }
 
 impl PreparedInput {
-    /// Parses `input_json`; on failure, the error result to return instead.
-    fn from_json(input_json: &str) -> Result<Self, String> {
-        let input: JsPlanInput = serde_json::from_str(input_json).map_err(|e| {
+    /// Parses `input_json`; on failure, the error result to return instead. With `pick_power`
+    /// (the exact planner), a `power_grid` lets the plan pick which units run on it; otherwise
+    /// (the backup planner) `emode_facility_counts` says.
+    fn from_json(input_json: &str, pick_power: bool) -> Result<Self, String> {
+        let mut input: JsPlanInput = serde_json::from_str(input_json).map_err(|e| {
             serde_json::to_string(&empty_production_plan(false, Some(format!("Invalid input: {}", e)))).unwrap_or_default()
         })?;
         let mut facility_counts = input.facility_counts();
@@ -1657,16 +1676,50 @@ impl PreparedInput {
         let mut items = get_embedded_items();
         if input.season {
             let mut season = embedded_season_items();
-            for terms in season.iter_mut().filter_map(|item| item.season.as_mut()) {
-                terms.currency_per_day = input.season_currency_per_day.map(|budget| budget.max(0.0));
+            for item in &mut season {
+                let min_plots = input.season_min_plots.get(&item.name).copied().unwrap_or(0);
+                if let Some(terms) = item.season.as_mut() {
+                    terms.currency_per_day = input.season_currency_per_day.map(|budget| budget.max(0.0));
+                    terms.min_plots = min_plots;
+                }
             }
             items.extend(season);
         }
         items.retain(|item| !input.exclude.iter().any(|name| name == crate::models::base_item_name(&item.name)));
 
+        let requirements = embedded_aniimo_requirements();
         let mut emode_facilities = input.emode_facilities.clone();
         let mut emode_counts = input.emode_facility_counts.clone();
-        if emode_counts.is_empty() {
+        let power = input.power_grid.as_ref().filter(|_| pick_power).map(|grid| crate::models::PowerGrid {
+            watts: grid.watts.iter().filter(|(f, _)| facility_counts.get_count(f) > 0).map(|(f, &w)| (f.clone(), w)).collect(),
+            capacity: grid.capacity.max(0.0),
+        });
+        if let Some(power) = power.filter(|p| !p.watts.is_empty()) {
+            // Every unit can run either way: each recipe gets a manual copy on "<facility>
+            // (Manual)", owning the same units, and the plan splits them (see `PowerGrid`).
+            emode_facilities = power.watts.keys().cloned().collect();
+            emode_counts.clear();
+            let mut manual_items = Vec::new();
+            for fac in &emode_facilities {
+                let manual_fac_name = format!("{fac} (Manual)");
+                for (i, (count, level)) in facility_counts.tiers(fac).into_iter().enumerate() {
+                    if i == 0 {
+                        facility_counts.set(&manual_fac_name, count, level);
+                    } else {
+                        facility_counts.add_tier(&manual_fac_name, count, level);
+                    }
+                }
+                for item in items.iter().filter(|i| i.facility == *fac) {
+                    let mut manual_item = item.clone();
+                    manual_item.name = format!("{}{}", item.name, crate::models::MANUAL_SUFFIX);
+                    manual_item.facility = manual_fac_name.clone();
+                    manual_item.emode_base_time = None;
+                    manual_items.push(manual_item);
+                }
+            }
+            items.extend(manual_items);
+            facility_counts.set_power(power);
+        } else if emode_counts.is_empty() {
             for f in &emode_facilities {
                 emode_counts.insert(f.clone(), facility_counts.get_count(f));
             }
@@ -1678,9 +1731,13 @@ impl PreparedInput {
             }
         }
 
-        // Handle partial electric facilities (0 < E < total owned):
+        // Handle partial electric facilities (0 < E < total owned). Sorted so the manual copies
+        // land in `items` in the same order on every call: the model's variables follow `items`,
+        // and `exact_plan` rebuilds the model to read back the solution `exact_problem`'s got.
+        let mut partial: Vec<(&String, &u32)> = emode_counts.iter().collect();
+        partial.sort_unstable();
         let mut manual_items = Vec::new();
-        for (fac, &e_count) in &emode_counts {
+        for (fac, &e_count) in partial {
             let total = facility_counts.get_count(fac);
             if e_count > 0 && e_count < total {
                 let manual_count = total - e_count;
@@ -1703,12 +1760,11 @@ impl PreparedInput {
         }
         items.extend(manual_items);
 
-        crate::models::apply_emode(&mut items, &emode_facilities, input.power_grid_rate);
+        crate::models::apply_emode(&mut items, &emode_facilities, input.power_grid_rate, &requirements);
         let setup = input
             .aniimo
             .as_deref()
             .and_then(|name| aniimo_setup_from(name, &input.aniimo_levels, &input.workers));
-        let requirements = embedded_aniimo_requirements();
         let grower_steps = embedded_grower_steps();
         let mut facility_counts = facility_counts;
         let crew = match (input.aniimo.as_deref(), &input.roster) {
@@ -1723,6 +1779,8 @@ impl PreparedInput {
             (None, Some(setup)) => requirements.apply(setup, &mut items),
             (None, None) => workers_from(&input.workers).apply(&requirements, &mut items),
         }
+        // What the plan's rows go by to say which units run on electricity.
+        input.emode_facilities = emode_facilities;
         Ok(PreparedInput { input, facility_counts, module_levels, items, setup, crew, requirements, grower_steps })
     }
 
@@ -1756,9 +1814,10 @@ impl PreparedInput {
                     }
                 }
 
+                // A producing row on an electric facility's own units (not its "(Manual)" ones).
                 let is_emode = !is_manual_variant
-                    && self.input.emode_facilities.contains(&step.facility)
-                    && self.items.iter().any(|i| i.facility == step.facility && i.emode_base_time.is_some());
+                    && step.status == crate::models::PlanStepStatus::Producing
+                    && self.input.emode_facilities.contains(&step.facility);
 
                 // With the player's roster, the row names the member working it.
                 let from_crew = match (&self.crew, step.crew, &step.item_name) {

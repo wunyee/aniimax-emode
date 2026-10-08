@@ -867,6 +867,24 @@ tbody tr:first-child td {
     border: 1px dashed;
 }
 
+/* The generator's map (see renderPowerDiagram in app.js): as wide as its poles reach. */
+.power-diagram svg {
+    width: 320px;
+    aspect-ratio: auto;
+}
+
+/* A legend line wraps as one block beside its swatch. */
+.power-legend-text {
+    flex: 1;
+}
+
+.power-bolt {
+    fill: #111;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+}
+
 /* Recipe reference tables (facility recipe modal): one table per facility, listed row order
    reflects level/name sort, not importance, same override as the facility-plan table above. */
 .recipe-table tbody tr:first-child td {
