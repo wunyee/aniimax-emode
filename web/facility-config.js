@@ -167,13 +167,15 @@ export const FACILITIES = [
     {
         name: 'Woodworking Bench', slug: 'woodworking-bench', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Artisanship', personality: 'Energetic', supportsEmode: true, powerWatts: 30,
         unlocks: { 1: 6, 2: 10, 3: 14, 4: 18 },
-        counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 2],
+        // One unit per tier the next level-up needs (2 at RV 10, 3 at RV 14 checked in game).
+        counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4],
         tooltip: "Lv.1: Rough Lumber&#10;Lv.2: Standard Planks&#10;Lv.3: Laminated Beams&#10;Lv.4: Densified Timber Component&#10;Turns Wood Blocks into RV level-up materials."
     },
     {
         name: 'Chimney Kiln', slug: 'chimney-kiln', defaultCount: 0, category: 'Materials Processing', hasWorker: true, ability: 'Fire', personality: 'Practical', supportsEmode: true, powerWatts: 30,
         unlocks: { 1: 6, 2: 10, 3: 14, 4: 18 },
-        counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 2],
+        // One unit per tier the next level-up needs (2 at RV 10, 3 at RV 14 checked in game).
+        counts: [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4],
         tooltip: "Lv.1: Coarse-Sifted Ore&#10;Lv.2: Sintered Ore Brick&#10;Lv.3: Refined Ore&#10;Lv.4: Microcrystalline Ore Plate&#10;Turns Mineral Sand into RV level-up materials."
     },
 ];

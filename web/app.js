@@ -10,7 +10,6 @@ import {
     FACILITY_POWER_WATTS, DEFAULT_GENERATOR_WATTS, GENERATOR_WATTS_BY_HOME_LEVEL, GENERATOR_CAPACITY_OPTIONS,
     GENERATOR_POWER_RANGE, POLE_POWER_RANGE, POWER_POLE_COUNTS_BY_RV,
 } from './facility-config.js';
-import { allocateTurnFacilities, redistributeTurnFacilityRows } from './turn-jobs.js';
 import { createShareUrl, readShareHash, urlWithoutShare } from './share-config.js';
 
 let wasmReady = false;
@@ -345,24 +344,26 @@ function activePowerGrid() {
     return { watts, capacity: getTargetEmodeWatts() };
 }
 
-// How many units of each facility a plan works on electricity (`electric`) or by hand: whole
-// units, so recipes taking turns on one count the units their shared time needs.
+// How many units of each electric facility a plan works on electricity (`electric`) or by hand.
 function planUnits(plan, electric) {
     const counts = {};
-    const shared = {};
     for (const step of plan.coin_items || []) {
         if (step.status !== 'producing' || !!step.is_emode !== electric || !(FACILITY_POWER_WATTS[step.facility] > 0)) continue;
-        if (takesTurns(step)) shared[step.facility] = (shared[step.facility] || 0) + (step.busy_units ?? step.facility_count);
-        else counts[step.facility] = (counts[step.facility] || 0) + step.facility_count;
-    }
-    for (const [facility, busy] of Object.entries(shared)) {
-        counts[facility] = (counts[facility] || 0) + Math.ceil(busy - 1e-6);
+        counts[step.facility] = (counts[step.facility] || 0) + step.facility_count;
     }
     return counts;
 }
 
 function planEmodeCounts(plan) {
     return planUnits(plan, true);
+}
+
+// What a plan is solved for, higher being better: its level-up's pace, its first priority, or
+// its coins.
+function planMeasure(plan) {
+    if (plan.level_up?.seconds > 0) return 1 / plan.level_up.seconds;
+    if (plan.priorities?.length) return plan.priorities[0].per_second;
+    return plan.rate_per_second;
 }
 
 // After the exact planner has put on electricity every unit that's no slower on it, the watts
@@ -1442,7 +1443,6 @@ function tripsPerUnit(step) {
 // Whether a crop needs a growing environment: grown without one, a building's temperature
 // would change it. Crops that need none grow the same anywhere.
 const needsEnvironment = item => !!recipeIndex.find(r => r.name === item)?.environment;
-const takesTurns = step => step.status === 'producing' && !!recipeIndex.find(r => r.name === step.item_name)?.turns;
 
 // The plan as pieces for `layOut`: environment blocks, then one piece per other facility unit,
 // then whatever the player owns that the plan doesn't use.
@@ -1501,26 +1501,8 @@ function homelandPieces(plan, input) {
         pieces.push({ cluster: true, buildings, plots, planned });
     });
 
-    // For every facility type, recipes allowed to take turns share a unit only when there are not
-    // enough owned units to give each recipe its own. No facility names are special-cased here.
-    const turnAllocations = allocateTurnFacilities(steps, facility => tierCount(input.facilities[facility]), takesTurns);
-    turnAllocations.forEach((allocations, facility) => {
-        const footprint = FACILITY_FOOTPRINTS[facility];
-        if (!footprint) {
-            unplaced.add(facility);
-            return;
-        }
-        allocations.forEach((jobs, idx) => {
-            const weight = jobs.reduce((sum, j) => sum + j.rate * 3600, 0);
-            const isEmode = Boolean(input.emode_facility_counts?.[facility] && idx < input.emode_facility_counts[facility]);
-            pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight, jobs: jobs.length ? jobs : undefined, cycle: jobs[0]?.cycle, facility, crop: jobs[0]?.item ?? null, sensitive: false, is_emode: isEmode }] });
-        });
-        count(facility, allocations.length);
-    });
-
-    // Everything else, one unit at a time; environment crops no map took count here too. Rows for
-    // a turn facility are already represented above, including its idle row and physical units.
-    steps.filter(step => !turnAllocations.has(step.facility)).forEach(step => {
+    // Everything else, one unit at a time; environment crops no map took count here too.
+    steps.forEach(step => {
         let n = step.facility_count;
         if (step.environment && step.status === 'producing') {
             const key = `${step.facility}|${step.item_name}`;
@@ -1843,7 +1825,7 @@ function homelandSvg(layout, homeLevel) {
 // Every finished batch goes to the Storage Unit, with its byproduct, and adds to what's there; a
 // recipe starts a batch only once the Storage Unit has all it takes, and takes it out. Each unit
 // also keeps to the plan's pace for each recipe it runs, so it doesn't take more than its share
-// of what others need; a Bench or Kiln runs its tiers in turn. A ring on each shows its batch,
+// of what others need. A ring on each shows its batch,
 // amber while it waits for materials. What isn't modeled: carrying takes no time (the dots walk
 // at a fixed pace just to show it), and which of two recipes wanting the same thing gets it first
 // (they take turns at random).
@@ -1860,8 +1842,7 @@ const SIM_DOT_GAP = 0.12;
 let layoutSim = null;
 
 // Each piece carried to the Storage Unit: its line and ring, and its jobs: what it makes, how
-// long a batch takes and its pace in the plan (batches a second). Most pieces have one; a Bench
-// or Kiln unit has one per tier it takes turns on (see `homelandPieces`).
+// long a batch takes and its pace in the plan (batches a second), one per piece.
 function layoutFlows(layout) {
     const s = layout.storage;
     const x2 = s.x + s.w / 2;
@@ -2490,7 +2471,7 @@ document.addEventListener('aniimax-language-change', () => {
 async function loadRecipeIndex() {
     try {
         recipeIndex = JSON.parse(await callWorker('get_all_items'))
-            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, turns: r.sell_currency === 'none' }))
+            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0 }))
             .sort((a, b) => a.facility.localeCompare(b.facility) || a.name.localeCompare(b.name));
         renderRecipeOptions();
         renderSkippedRecipes();
@@ -3156,8 +3137,7 @@ function prettyReason(reason) {
     if (!reason) return reason;
     const names = list => list.split(', ').map(prettyItem).join(', ');
     return reason
-        .replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + names(list))
-        .replace(/takes turns with ([^;]+)$/, (_, list) => 'takes turns with ' + names(list));
+        .replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + names(list));
 }
 
 // Keys ("Facility|item") of the shown plan's rows that rely on recipes not yet checked in game;
@@ -4091,25 +4071,13 @@ function planPowerLayout(units, maxPoles) {
 }
 
 // The electric units `rows` (a plan's producing E-mode rows) take, one per physical unit, each
-// labelled with what it makes: recipes taking turns on a unit share its label.
-function powerUnits(plan, rows) {
-    const counts = planEmodeCounts(plan);
-    const units = [];
-    for (const [facility, count] of Object.entries(counts)) {
-        const [w, h] = FACILITY_FOOTPRINTS[facility] || [2, 2];
-        const own = rows.filter(r => r.facility === facility);
-        const shared = own.filter(takesTurns).map(r => prettyItem(r.item_name));
-        const queue = own.filter(r => !takesTurns(r)).map(r => ({ item: prettyItem(r.item_name), left: r.facility_count }));
-        for (let i = 0; i < count; i++) {
-            while (queue.length && queue[0].left <= 0) queue.shift();
-            let items = shared;
-            if (queue.length) {
-                items = [queue[0].item];
-                queue[0].left--;
-            }
-            units.push({ facility, w, h, items, label: items.join(' / ') });
-        }
-    }
+// labelled with what it makes.
+function powerUnits(rows) {
+    const units = rows.flatMap(row => {
+        const [w, h] = FACILITY_FOOTPRINTS[row.facility] || [2, 2];
+        const item = prettyItem(row.item_name);
+        return Array.from({ length: row.facility_count }, () => ({ facility: row.facility, w, h, items: [item], label: item }));
+    });
     return units.sort((a, b) => b.w * b.h - a.w * a.h || a.facility.localeCompare(b.facility));
 }
 
@@ -4179,9 +4147,9 @@ function renderPowerDiagram(map) {
 }
 
 // The generator's section: its map next to a table of every unit running on it.
-function powerSection(plan, rows) {
+function powerSection(rows) {
     if (rows.length === 0) return '';
-    const map = planPowerLayout(powerUnits(plan, rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0);
+    const map = planPowerLayout(powerUnits(rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0);
     const used = map.placed.concat(map.unplaced).reduce((sum, u) => sum + (FACILITY_POWER_WATTS[u.facility] || 0), 0);
     const cap = getTargetEmodeWatts();
     const supply = getPowerGridRate() >= 1.15 ? ' · 120% supply' : '';
@@ -4210,11 +4178,7 @@ function powerSection(plan, rows) {
 // else falls back to the original per-facility-category grouping (FACILITY_CATEGORIES).
 function renderFacilityPlan(plan) {
     const container = document.getElementById('facility-plan-container');
-    const steps = redistributeTurnFacilityRows(
-        plan.coin_items || [],
-        facility => tierCount(lastPlanInput?.facilities?.[facility]),
-        takesTurns
-    );
+    const steps = plan.coin_items || [];
 
     if (steps.length === 0) {
         container.innerHTML = '<p class="hint">Nothing profitable to produce with the current facilities.</p>';
@@ -4327,7 +4291,7 @@ function renderFacilityPlan(plan) {
 
     // Units on electricity get the generator's own section and map.
     const electricSteps = ungatedSteps.filter(step => step.is_emode && step.status === 'producing');
-    const powerSections = powerSection(plan, electricSteps);
+    const powerSections = powerSection(electricSteps);
 
     const byCategory = new Map(FACILITY_CATEGORIES.map(c => [c, []]));
     const outside = [...outsideOf.values()].flat();
@@ -4630,7 +4594,9 @@ async function runFindPlan() {
             const retry = { ...input, power_grid: null, emode_facility_counts: filled, emode_facilities: Object.keys(filled) };
             const retryPlan = JSON.parse(await callWorker('find_plan', JSON.stringify({ ...retry, aniimo: bestSetup })));
             if (runId !== planRunId) return;
-            if (!retryPlan.success) break;
+            // Saving Aniimo mustn't cost the plan its goal: a slower level-up, less of the first
+            // priority or fewer coins keeps the plan as it was.
+            if (!retryPlan.success || planMeasure(retryPlan) < planMeasure(bestPlan) * (1 - 1e-6) - 1e-12) break;
             Object.assign(input, retry);
             bestPlan = retryPlan;
         }

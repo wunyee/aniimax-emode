@@ -230,29 +230,40 @@ fn exact_level_up_makes_its_items_from_byproducts() {
     assert!(fastest.objective < 1e-9, "pace {} without a Bench", fastest.objective);
 }
 
-// Standard Planks are made from Rough Lumber on the same Woodworking Bench, so with one Bench the
-// two recipes take turns on it.
+// A Bench or Kiln is set to one recipe and left on it, so Standard Planks, made from Rough
+// Lumber, take two Benches: one Bench (and one Kiln) can't make them at all, and with two each
+// recipe gets a whole unit of its own.
 #[test]
-fn exact_level_up_takes_turns_on_one_bench() {
+fn exact_level_up_keeps_each_bench_on_one_recipe() {
     let Some(items) = load_items() else { return };
-    let counts = FacilityCounts::only(&[
+    let cost = level_up(&[("coins", 680000.0), ("standard_planks", 320.0), ("sintered_ore_brick", 350.0)], &[]);
+    let one = FacilityCounts::only(&[
         ("Farmland", 6, 2),
         ("Woodland", 3, 2),
         ("Mine", 2, 2),
         ("Woodworking Bench", 1, 2),
         ("Chimney Kiln", 1, 2),
     ]);
-    let cost = level_up(&[("coins", 680000.0), ("standard_planks", 320.0), ("sintered_ore_brick", 350.0)], &[]);
-    let (plan, _) = solve_level_up(&items, &counts, &cost);
+    let fastest = solve_exact(&items, "coins", &one, &ModuleLevels::default(), Goal::LevelUp(&cost), None, None).unwrap();
+    assert!(fastest.objective < 1e-9, "pace {} with one Bench and one Kiln", fastest.objective);
+
+    let two = FacilityCounts::only(&[
+        ("Farmland", 6, 2),
+        ("Woodland", 3, 2),
+        ("Mine", 2, 2),
+        ("Woodworking Bench", 2, 2),
+        ("Chimney Kiln", 2, 2),
+    ]);
+    let (plan, _) = solve_level_up(&items, &two, &cost);
     for name in ["rough_lumber", "standard_planks", "coarse_sifted_ore", "sintered_ore_brick"] {
         assert_eq!(plan.units.get(name), Some(&1), "{name}: {plan:?}");
     }
-    let shown = to_production_plan(&plan, &items, "coins", &counts);
-    let planks = shown.coin_items.iter().find(|s| s.item_name.as_deref() == Some("standard_planks")).unwrap();
-    assert!(planks.reason.contains("takes turns with rough_lumber"), "{}", planks.reason);
-    let bench_busy: f64 =
-        shown.coin_items.iter().filter(|s| s.facility == "Woodworking Bench").filter_map(|s| s.busy_units).sum();
-    assert!(bench_busy <= 1.0 + 1e-6, "Bench busy {bench_busy}");
+    let shown = to_production_plan(&plan, &items, "coins", &two);
+    for facility in ["Woodworking Bench", "Chimney Kiln"] {
+        let rows: Vec<_> = shown.coin_items.iter().filter(|s| s.facility == facility && s.item_name.is_some()).collect();
+        assert_eq!(rows.len(), 2, "{facility}: {rows:?}");
+        assert!(rows.iter().all(|s| s.facility_count == 1 && !s.reason.contains("takes turns")), "{facility}: {rows:?}");
+    }
 }
 
 // Mineral Sand is plentiful here while Wood Blocks set the pace, so the Kiln turns the spare sand

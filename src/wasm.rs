@@ -1619,7 +1619,7 @@ fn level_up_report(
     let seconds = crate::exact::PACE_UNIT / pace;
     let level_up_item = |name: &str| {
         crate::models::BYPRODUCT_ITEMS.iter().any(|(_, item)| *item == name)
-            || items.iter().any(|i| i.name == name && crate::exact::takes_turns(i))
+            || items.iter().any(|i| i.name == name && crate::exact::is_level_up_material(i))
     };
     let mut names: Vec<&str> = net.keys().map(String::as_str).chain(level_up.stock.iter().map(|(n, _)| n.as_str())).collect();
     names.sort_unstable();
