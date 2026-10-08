@@ -3317,6 +3317,10 @@ const ENVIRONMENT_BUILDING_ABILITY = {
     'Sunlamp': 'Light',
 };
 
+// The Crackle Generator, like an environment building, keeps an Aniimo of its own while any unit
+// runs on it: a Lightning one, of any level.
+const GENERATOR_ABILITY = 'Lightning';
+
 // A colored ability tag, like the game's.
 function abilityTag(name) {
     const a = ABILITY_BY_NAME.get(name);
@@ -3478,7 +3482,7 @@ function renderAniimoSummary(plan) {
     // Environment buildings in use each keep an Aniimo busy (abilities confirmed in game; whether
     // level or personality matters isn't known yet, so any level is shown).
     const needsAniimo = (building, units, place) => {
-        const ability = ENVIRONMENT_BUILDING_ABILITY[building];
+        const ability = building === 'Crackle Generator' ? GENERATOR_ABILITY : ENVIRONMENT_BUILDING_ABILITY[building];
         if (!ability || !units) return;
         const key = `${ability} (environment)`;
         if (!groups.has(key)) {
@@ -3505,6 +3509,9 @@ function renderAniimoSummary(plan) {
         needsAniimo(building, units, `${building} (${modes[0]})`);
         needsAniimo(partner, units, `${partner} (${modes[1]})`);
     });
+    if ((plan.coin_items || []).some(step => step.is_emode && step.status === 'producing')) {
+        needsAniimo('Crackle Generator', 1, 'Crackle Generator');
+    }
     const collapsedSummary = document.getElementById('aniimo-collapsed-summary');
     if (groups.size === 0) {
         container.innerHTML = '<p class="hint">Nothing in this plan needs an Aniimo.</p>';
