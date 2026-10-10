@@ -1773,8 +1773,7 @@ function homelandSvg(layout, homeLevel) {
                 aura += `<g class="generator-power-network" pointer-events="none">
                     <!-- Crackle Generator 11x11 Square Grid -->
                     <rect x="${gx}" y="${gy}" width="11" height="11" rx="0.3"
-                        fill="#06b6d4" fill-opacity="0.06" stroke="#06b6d4" stroke-opacity="0.6" stroke-width="0.16" stroke-dasharray="0.8 0.4" />
-                    <text x="${genCenter.x}" y="${gy - 0.35}" font-size="0.72" fill="#06b6d4" font-weight="700" text-anchor="middle">⚡ Crackle Generator (11×11 Grid)</text>`;
+                        fill="#06b6d4" fill-opacity="0.06" stroke="#06b6d4" stroke-opacity="0.6" stroke-width="0.16" stroke-dasharray="0.8 0.4" />`;
 
                 let lastNode = genCenter;
                 poles.forEach((pole, idx) => {
@@ -1788,7 +1787,6 @@ function homelandSvg(layout, homeLevel) {
                         <!-- Power Transmission Cable -->
                         <line x1="${lastNode.x}" y1="${lastNode.y}" x2="${pCenter.x}" y2="${pCenter.y}"
                             stroke="#06b6d4" stroke-width="0.14" stroke-dasharray="0.4 0.2" stroke-opacity="0.75" />
-                        <text x="${pCenter.x}" y="${py - 0.25}" font-size="0.55" fill="#eab308" font-weight="600" text-anchor="middle">⚡ Pole #${idx + 1} (7×7 Relay)</text>
                     `;
                     lastNode = pCenter;
                 });
