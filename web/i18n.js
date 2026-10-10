@@ -4,9 +4,11 @@ const catalogs = { en: {} };
 const templates = {};
 let language = 'en';
 let translateZhTw;
-let preferredLanguage = 'en';
-try { preferredLanguage = localStorage.getItem('aniimax-language') || 'en'; } catch (_) { /* Private browsing can disable storage. */ }
-if (!Object.hasOwn(languages, preferredLanguage)) preferredLanguage = 'en';
+// The E-mode edition opens in Traditional Chinese until a visitor picks another language.
+const DEFAULT_LANGUAGE = 'zh-TW';
+let preferredLanguage = DEFAULT_LANGUAGE;
+try { preferredLanguage = localStorage.getItem('aniimax-language') || DEFAULT_LANGUAGE; } catch (_) { /* Private browsing can disable storage. */ }
+if (!Object.hasOwn(languages, preferredLanguage)) preferredLanguage = DEFAULT_LANGUAGE;
 
 async function load(code) {
     if (!catalogs[code]) {
