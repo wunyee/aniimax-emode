@@ -12,6 +12,13 @@
 // for. Anything else, including crops that need no environment, may stand anywhere. Pieces may touch but not overlap, sit on a quarter-tile grid (the smallest step in
 // any footprint), and may be turned a quarter at a time.
 //
+// A Crackle Generator piece (a member marked `generator`) goes down first, then any Crackle Power
+// Pole pieces (`powerPole`). Power reaches the generator's 11x11 range and the 7x7 of every pole
+// touching a range already powered. Every unit on electricity (`is_emode`) costs `POWER_PENALTY`
+// more anywhere power doesn't reach, while the generator and each pole cost that much less for
+// each electric unit power then reaches: so the units on it gather around them near the Storage
+// Unit, and the rest still go by their walking alone.
+//
 // Busiest pieces for their size go down first, each where it costs least; then each is lifted
 // and put back wherever is cheapest with the rest in place, until nothing moves. This is a
 // heuristic: it finds a good layout, not a proven best one.
@@ -27,6 +34,11 @@ const RADIUS = 4.5;
 const CLUSTER_TRIES = 24;
 const CLUSTER_PACKS = 2;
 const CLUSTER_PACK_MOST = 12;
+// What an electric unit out of the generator's reach costs: far more than any walking.
+const POWER_PENALTY = 1e5;
+// What a pole saves for each tile of ground it adds to power's reach: far less than a unit
+// powered (a 7x7 range is 49 tiles), but more than the walking a unit could save.
+const POWER_GROUND = 100;
 
 // `pieces`: each either
 // - `{ members: [{ x, y, w, h, weight, sensitive }] }`, one rigid piece (a facility unit), whose
@@ -52,10 +64,17 @@ export function layOut(pieces, options = {}) {
     const membersOf = piece => (piece.cluster ? [...piece.buildings.map(b => ({ ...b, weight: 0 })), ...piece.plots] : piece.members);
     const weightOf = piece => membersOf(piece).reduce((sum, m) => sum + m.weight, 0);
     const areaOf = piece => membersOf(piece).reduce((sum, m) => sum + m.w * m.h, 0);
+    const isGenerator = piece => !piece.cluster && piece.members.some(m => m.generator);
+    const isPole = piece => !piece.cluster && piece.members.some(m => m.powerPole);
+    const isElectric = piece => !piece.cluster && piece.members.some(m => m.is_emode);
+    const firstOf = piece => (isGenerator(piece) ? 2 : isPole(piece) ? 1 : 0);
     const order = pieces
-        .map((piece, i) => ({ i, density: weightOf(piece) / Math.max(areaOf(piece), EPSILON) }))
-        .sort((a, b) => b.density - a.density || areaOf(pieces[b.i]) - areaOf(pieces[a.i]))
+        .map((piece, i) => ({ i, first: firstOf(piece), density: weightOf(piece) / Math.max(areaOf(piece), EPSILON) }))
+        .sort((a, b) => b.first - a.first || b.density - a.density || areaOf(pieces[b.i]) - areaOf(pieces[a.i]))
         .map(p => p.i);
+    const generatorIndex = pieces.findIndex(isGenerator);
+    const poleIndices = pieces.map((piece, i) => (isPole(piece) ? i : -1)).filter(i => i >= 0);
+    const electricIndices = pieces.map((piece, i) => (isElectric(piece) ? i : -1)).filter(i => i >= 0);
 
     // Spots to try: the open cells' extent, or with none given, well past what everything needs.
     const totalArea = pieces.reduce((sum, p) => sum + areaOf(p), 0) + storage.w * storage.h;
@@ -76,7 +95,10 @@ export function layOut(pieces, options = {}) {
     const placedRects = new Map();
     const squares = new Map();
     const sensitive = new Map();
+    // Where power reaches (see `poweredRanges`), kept until something is put down or lifted.
+    let reachCache = null;
     const occupy = (key, spot) => {
+        reachCache = null;
         placedRects.set(key, spot.rects);
         spot.rects.forEach(r => cellsOf(r).forEach(c => {
             if (!grid.has(c)) grid.set(c, new Set());
@@ -86,6 +108,7 @@ export function layOut(pieces, options = {}) {
         if (spot.sensitive?.length) sensitive.set(key, spot.sensitive);
     };
     const vacate = key => {
+        reachCache = null;
         (placedRects.get(key) || []).forEach(r => cellsOf(r).forEach(c => grid.get(c)?.delete(key)));
         placedRects.delete(key);
         squares.delete(key);
@@ -109,23 +132,74 @@ export function layOut(pieces, options = {}) {
     };
     occupy('storage', { rects: [storageRect] });
 
+    // The power term of a rigid piece's cost at `rects` (see `POWER_PENALTY`): an electric unit
+    // out of power's reach costs the penalty; the generator or a pole saves it for each electric
+    // unit already down that power then reaches.
+    const rangeAround = (r, size) => ({ x: r.x + r.w / 2 - size / 2, y: r.y + r.h / 2 - size / 2, w: size, h: size });
+    // Where power reaches, with piece `i` (the generator or a pole) at `rect` if given: the
+    // generator's range, then each pole's whose pole touches a range already in.
+    const poweredRanges = (i = -1, rect = null) => {
+        const at = k => (k === i ? rect : placedRects.get(k)?.[0]);
+        const generator = at(generatorIndex);
+        if (!generator) return [];
+        const ranges = [rangeAround(generator, GENERATOR_RANGE)];
+        let left = poleIndices.filter(k => at(k));
+        for (let grew = true; grew && left.length;) {
+            grew = false;
+            left = left.filter(k => {
+                if (!ranges.some(range => overlapArea(range, at(k)) > EPSILON)) return true;
+                ranges.push(rangeAround(at(k), POLE_RANGE));
+                grew = true;
+                return false;
+            });
+        }
+        return ranges;
+    };
+    const reaches = (ranges, rect) => ranges.some(range => overlapArea(range, rect) > EPSILON);
+    const powerCost = (i, shape, rects) => {
+        if (generatorIndex < 0) return 0;
+        if (i === generatorIndex || poleIndices.includes(i)) {
+            const ranges = poweredRanges(i, rects[0]);
+            const reached = electricIndices.filter(e => placedRects.has(e) && placedRects.get(e).some(r => reaches(ranges, r))).length;
+            if (i === generatorIndex) return -POWER_PENALTY * reached;
+            // A pole off the network powers nothing, so it may as well sit anywhere else. On it,
+            // it's also worth the ground it adds to what power reaches, so poles put down before
+            // the units on electricity spread the power out for them instead of crowding in.
+            const own = rangeAround(rects[0], POLE_RANGE);
+            if (!ranges.some(range => range.x === own.x && range.y === own.y && range.w === own.w)) return POWER_PENALTY;
+            const added = Math.max(0, own.w * own.h - ranges.filter(range => range !== ranges.find(r => r.x === own.x && r.y === own.y && r.w === own.w))
+                .reduce((sum, range) => sum + overlapArea(own, range), 0));
+            return -POWER_PENALTY * reached - POWER_GROUND * added;
+        }
+        if (!shape.members.some(m => m.is_emode)) return 0;
+        if (!reachCache) reachCache = poweredRanges();
+        if (!reachCache.length) return 0;
+        return shape.members.reduce((sum, m, j) => sum + (m.is_emode && !reaches(reachCache, rects[j]) ? POWER_PENALTY : 0), 0);
+    };
+
     const placeRigid = i => {
         let best = null;
+        // The generator and its poles are worth where their power reaches, not how near they sit,
+        // so they look everywhere; a pole only where it touches the power already reaching out.
+        const power = i === generatorIndex || poleIndices.includes(i);
+        const network = poleIndices.includes(i) ? poweredRanges(i, null) : null;
         for (const shape of shapes[i]) {
             let firstFit = null;
             for (const [ox, oy, distance] of offsets) {
-                if (firstFit !== null && distance > firstFit + shape.spread + STEP) break;
+                if (!power && firstFit !== null && distance > firstFit + shape.spread + STEP) break;
                 const x = snap(ox - shape.cx);
                 const y = snap(oy - shape.cy);
                 tried++;
                 const rects = shape.members.map(m => ({ x: m.x + x, y: m.y + y, w: m.w, h: m.h }));
+                if (network?.length && !reaches(network, rects[0])) continue;
                 if (!rects.every(r => free(r, i))) continue;
                 const touchy = rects.filter((r, j) => shape.members[j].sensitive);
                 if (touchy.some(r => inOtherSquare(r, i))) continue;
                 if (firstFit === null) firstFit = distance;
                 const cost = shape.members.reduce((sum, m) => sum + m.weight * centerDistance(m, x, y), 0)
                     // Pieces nobody visits still go as close as they can, to keep the homeland tight.
-                    + EPSILON * Math.hypot(shape.cx + x, shape.cy + y);
+                    + EPSILON * Math.hypot(shape.cx + x, shape.cy + y)
+                    + powerCost(i, shape, rects);
                 if (!best || cost < best.cost - EPSILON) best = { cost, x, y, shape, rects, sensitive: touchy };
             }
         }
@@ -245,8 +319,10 @@ export function layOut(pieces, options = {}) {
 // Lays the homeland out within its open `cells` (in homeland tiles), trying the Storage Unit at
 // the middle of the open area and at the middles of the open plots nearest it, and keeping
 // whichever walks least with everything placed. Returns what `layOut` does, moved into the
-// homeland's own frame, plus `storageAt`, the Storage Unit's center.
-export function layOutHomeland(pieces, cells, storage = { w: 2, h: 2 }) {
+// homeland's own frame, plus `storageAt`, the Storage Unit's center. With `maxPoles` given, the
+// Crackle Generator and its poles then go down too (see `placePower`), as pieces of their own,
+// and `unpowered` counts the electric units still out of their reach.
+export function layOutHomeland(pieces, cells, storage = { w: 2, h: 2 }, maxPoles = null) {
     const area = cells.reduce((sum, c) => sum + c.w * c.h, 0);
     const mid = {
         x: cells.reduce((sum, c) => sum + (c.x + c.w / 2) * c.w * c.h, 0) / area,
@@ -273,12 +349,225 @@ export function layOutHomeland(pieces, cells, storage = { w: 2, h: 2 }) {
     }
     const { out, at } = best;
     const move = r => ({ ...r, x: r.x + at.x, y: r.y + at.y });
+    const placed = out.pieces.map(p => ({ ...p, members: p.members.map(move) }));
+    const storagePlaced = move(out.storage);
+    let unpowered = 0;
+    if (maxPoles !== null) {
+        const members = placed.flatMap(p => p.members);
+        const power = placePower(members, storagePlaced, cells, maxPoles);
+        if (power) {
+            unpowered = power.unpowered.length;
+            const piece = (r, extra) => ({ cost: 0, members: [{ ...r, weight: 0, sensitive: false, ...extra }] });
+            if (power.generator && !members.includes(power.generator)) placed.push(piece(power.generator, { facility: 'Crackle Generator', generator: true }));
+            power.poles.forEach(pole => placed.push(piece(pole, { facility: 'Crackle Power Pole', powerPole: true })));
+            // Poles the layout put down that power turned out not to need.
+            for (let k = placed.length - 1; k >= 0; k--) {
+                if (placed[k].members.some(m => power.removed.includes(m))) placed.splice(k, 1);
+            }
+        }
+    }
     return {
         ...out,
         tried,
         storageAt: at,
-        storage: move(out.storage),
-        pieces: out.pieces.map(p => ({ ...p, members: p.members.map(move) })),
+        storage: storagePlaced,
+        pieces: placed,
+        unpowered,
+    };
+}
+
+// The Crackle Generator's range and a Crackle Power Pole's, squares centered on each, and their
+// footprints (see GENERATOR_POWER_RANGE and FACILITY_FOOTPRINTS in facility-config.js).
+const GENERATOR_RANGE = 11;
+const POLE_RANGE = 7;
+const GENERATOR_SIZE = 2;
+const POLE_SIZE = 1.5;
+
+// Places the Crackle Generator and its poles on a laid-out homeland, after everything else, and
+// makes sure every unit on electricity (`is_emode`) is powered: any part of it in the
+// generator's 11x11 range or a pole's 7x7, as in the game; a pole has to touch a range already
+// powered. The generator and poles the layout put down (members marked `generator` and
+// `powerPole`) are kept; with no generator, one goes on free ground where it powers the most
+// electric units. Then a pole at a time where it powers the most still unpowered, or where none
+// can yet, a chain of poles towards the nearest. An electric unit poles can't reach is moved, as
+// little as it can be: to the free powered spot where its trips to the Storage Unit walk least,
+// turned if that fits better; when there's none, another pole opens the most free ground first.
+// Last, any pole power reaches as far without is taken back up. Moves `members` in place.
+// `storage` is the Storage Unit's rect, `cells` the open ground. Returns `{ generator, poles,
+// removed, unpowered }`: the generator, the poles added here, the layout's poles taken back up,
+// and the electric units still out of reach (only when the homeland has no room in reach); or
+// null when there's no electric unit.
+export function placePower(members, storage, cells, maxPoles) {
+    const electric = members.filter(m => m.is_emode);
+    if (!electric.length) return null;
+
+    // The open ground on a quarter-tile grid: what's open, what's taken, what's powered.
+    const Q = 1 / STEP;
+    const x0 = Math.min(...cells.map(c => c.x));
+    const y0 = Math.min(...cells.map(c => c.y));
+    const cols = Math.ceil((Math.max(...cells.map(c => c.x + c.w)) - x0) * Q);
+    const rows = Math.ceil((Math.max(...cells.map(c => c.y + c.h)) - y0) * Q);
+    const open = new Uint8Array(cols * rows);
+    const used = new Uint8Array(cols * rows);
+    const lit = new Uint8Array(cols * rows);
+    const span = r => [
+        Math.max(0, Math.round((r.x - x0) * Q)), Math.min(cols, Math.round((r.x + r.w - x0) * Q)),
+        Math.max(0, Math.round((r.y - y0) * Q)), Math.min(rows, Math.round((r.y + r.h - y0) * Q)),
+    ];
+    const fill = (grid, r, value) => {
+        const [a, b, c, d] = span(r);
+        for (let y = c; y < d; y++) grid.fill(value, y * cols + a, y * cols + b);
+    };
+    cells.forEach(c => fill(open, c, 1));
+    [...members, storage].forEach(m => fill(used, m, 1));
+    const freeHere = r => {
+        if (r.x < x0 - EPSILON || r.y < y0 - EPSILON || r.x + r.w > x0 + cols / Q + EPSILON || r.y + r.h > y0 + rows / Q + EPSILON) return false;
+        const [a, b, c, d] = span(r);
+        for (let y = c; y < d; y++) {
+            for (let i = y * cols + a; i < y * cols + b; i++) if (!open[i] || used[i]) return false;
+        }
+        return true;
+    };
+
+    const rangeOf = (r, size) => ({ x: r.x + r.w / 2 - size / 2, y: r.y + r.h / 2 - size / 2, w: size, h: size });
+    const powers = (range, r) => overlapArea(range, r) > EPSILON;
+    const gap = (a, b) => Math.hypot(
+        Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)),
+        Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h)),
+    );
+    const sx = storage.x + storage.w / 2;
+    const sy = storage.y + storage.h / 2;
+    // Free spots on the grid for a `w` x `h` footprint within `area`.
+    const spotsIn = (area, w, h) => {
+        const out = [];
+        for (let y = snap(area.y0); y + h <= area.y1 + EPSILON; y += STEP) {
+            for (let x = snap(area.x0); x + w <= area.x1 + EPSILON; x += STEP) {
+                const r = { x, y, w, h };
+                if (freeHere(r)) out.push(r);
+            }
+        }
+        return out;
+    };
+    const around = (rs, margin) => ({
+        x0: Math.min(...rs.map(r => r.x)) - margin,
+        y0: Math.min(...rs.map(r => r.y)) - margin,
+        x1: Math.max(...rs.map(r => r.x + r.w)) + margin,
+        y1: Math.max(...rs.map(r => r.y + r.h)) + margin,
+    });
+
+    let generator = members.find(m => m.generator) || null;
+    if (!generator) {
+        let best = null;
+        for (const r of spotsIn(around(electric, GENERATOR_RANGE / 2), GENERATOR_SIZE, GENERATOR_SIZE)) {
+            const range = rangeOf(r, GENERATOR_RANGE);
+            const covered = electric.filter(u => powers(range, u));
+            const distance = covered.reduce((sum, u) => sum + Math.hypot(r.x - u.x, r.y - u.y), 0);
+            if (!best || covered.length > best.count || (covered.length === best.count && distance < best.distance - EPSILON)) {
+                best = { r, count: covered.length, distance };
+            }
+        }
+        if (!best) return { generator: null, poles: [], removed: [], unpowered: electric };
+        generator = best.r;
+        fill(used, generator, 1);
+    }
+
+    // Power reaches the generator's range and each pole's that touches a range already in.
+    const laid = members.filter(m => m.powerPole);
+    const poles = [];
+    const networkOf = list => {
+        const ranges = [rangeOf(generator, GENERATOR_RANGE)];
+        let left = [...list];
+        for (let grew = true; grew && left.length;) {
+            grew = false;
+            left = left.filter(pole => {
+                if (!ranges.some(range => overlapArea(range, pole) > EPSILON)) return true;
+                ranges.push(rangeOf(pole, POLE_RANGE));
+                grew = true;
+                return false;
+            });
+        }
+        return ranges;
+    };
+    const ranges = networkOf(laid);
+    ranges.forEach(range => fill(lit, range, 1));
+    const unpowered = () => electric.filter(u => !ranges.some(range => powers(range, u)));
+    // Free ground a range would power that nothing powers yet, in grid cells.
+    const darkGround = range => {
+        const [a, b, c, d] = span(range);
+        let n = 0;
+        for (let y = c; y < d; y++) {
+            for (let i = y * cols + a; i < y * cols + b; i++) if (open[i] && !used[i] && !lit[i]) n++;
+        }
+        return n;
+    };
+    // A pole touching a powered range, where `score` (higher is better) says.
+    const addPole = score => {
+        if (laid.length + poles.length >= maxPoles) return false;
+        let pick = null;
+        for (const r of spotsIn(around(ranges, POLE_SIZE), POLE_SIZE, POLE_SIZE)) {
+            if (!ranges.some(range => overlapArea(range, r) > EPSILON)) continue;
+            const range = rangeOf(r, POLE_RANGE);
+            const value = score(range);
+            if (value > EPSILON && (!pick || value > pick.value + EPSILON)) pick = { r, range, value };
+        }
+        if (!pick) return false;
+        poles.push(pick.r);
+        fill(used, pick.r, 1);
+        ranges.push(pick.range);
+        fill(lit, pick.range, 1);
+        return true;
+    };
+
+    // Poles where they power what's still out of reach; where none can yet, a chain of them
+    // towards the nearest, each bringing the power closer.
+    while (unpowered().length) {
+        const left = unpowered();
+        const reach = Math.min(...left.map(u => Math.min(...ranges.map(range => gap(range, u)))));
+        const added = addPole(range => {
+            const covers = left.filter(u => powers(range, u)).length;
+            const nearest = Math.min(...left.map(u => gap(range, u)));
+            return covers ? covers * 1000 - nearest : reach - nearest - STEP;
+        });
+        if (!added) break;
+    }
+
+    // Whatever is still out of reach moves into it, where its walking costs least.
+    const moveIntoRange = unit => {
+        fill(used, unit, 0);
+        let pick = null;
+        for (const [w, h] of unit.w === unit.h ? [[unit.w, unit.h]] : [[unit.w, unit.h], [unit.h, unit.w]]) {
+            // Any part of it in a range will do, so it may reach past one by nearly its size.
+            for (const r of spotsIn(around(ranges, Math.max(w, h) - STEP), w, h)) {
+                if (!ranges.some(range => powers(range, r))) continue;
+                const cost = (unit.weight || 0) * Math.hypot(r.x + w / 2 - sx, r.y + h / 2 - sy) + Math.hypot(r.x - unit.x, r.y - unit.y) * EPSILON;
+                if (!pick || cost < pick.cost) pick = { r, cost };
+            }
+        }
+        if (pick) Object.assign(unit, { x: pick.r.x, y: pick.r.y, w: pick.r.w, h: pick.r.h });
+        fill(used, unit, 1);
+        return !!pick;
+    };
+    for (let left = unpowered(); left.length; left = unpowered()) {
+        // The busiest first, so it gets the spot nearest the Storage Unit.
+        const unit = [...left].sort((a, b) => (b.weight || 0) - (a.weight || 0))[0];
+        if (moveIntoRange(unit)) continue;
+        // No room in reach: a pole that opens the most free ground, then try again.
+        if (!addPole(darkGround)) break;
+    }
+
+    // Any pole power reaches as far without is taken back up, the last ones first.
+    const removed = [];
+    const powered = electric.filter(u => ranges.some(range => powers(range, u)));
+    for (const pole of [...laid, ...poles].reverse()) {
+        const rest = [...laid, ...poles].filter(other => other !== pole && !removed.includes(other));
+        const without = networkOf(rest);
+        if (powered.every(u => without.some(range => powers(range, u)))) removed.push(pole);
+    }
+    return {
+        generator,
+        poles: poles.filter(pole => !removed.includes(pole)),
+        removed: removed.filter(pole => laid.includes(pole)),
+        unpowered: unpowered(),
     };
 }
 

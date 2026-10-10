@@ -1499,10 +1499,28 @@ function homelandPieces(plan, input) {
             // A crop that needs an environment but is grown without one stays out of every
             // coverage square, so no building's temperature changes it.
             const growing = step.status === 'producing';
-            pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: tripsPerUnit(step), cycle: step.cycle_time, facility: step.facility, crop: growing ? step.item_name : null, sensitive: growing && needsEnvironment(step.item_name), is_emode: !!step.is_emode }] });
+            pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: tripsPerUnit(step), cycle: step.cycle_time, facility: step.facility, crop: growing ? step.item_name : null, sensitive: growing && needsEnvironment(step.item_name), is_emode: growing && !!step.is_emode }] });
         }
         count(step.facility, n);
     });
+
+    // The Crackle Generator, when anything runs on it: placed first, with the units on it around
+    // it (see `POWER_PENALTY` in layout.js); its poles come after (see `placePower`).
+    const electric = steps.filter(step => step.is_emode && step.status === 'producing');
+    if (electric.length) {
+        pieces.push({ members: [{ x: 0, y: 0, w: 2, h: 2, weight: 0, facility: 'Crackle Generator', generator: true, sensitive: false }] });
+        // About as many poles as the units' ground needs past what the generator's range holds
+        // (a unit only has to touch it, so some reach past), and one to spare; the layout takes
+        // back any it didn't need (see `placePower`).
+        const ground = electric.reduce((sum, step) => {
+            const [w, h] = FACILITY_FOOTPRINTS[step.facility] || [2, 2];
+            return sum + w * h * step.facility_count;
+        }, 0);
+        const poles = Math.min(POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0, Math.max(0, Math.ceil((ground - 120) / 35) + 1));
+        for (let p = 0; p < poles; p++) {
+            pieces.push({ members: [{ x: 0, y: 0, w: 1.5, h: 1.5, weight: 0, facility: 'Crackle Power Pole', powerPole: true, sensitive: false }] });
+        }
+    }
 
     // What's owned but not in the plan at all, such as environment buildings it didn't need.
     FACILITIES.forEach(f => {
@@ -1519,36 +1537,6 @@ function homelandPieces(plan, input) {
         const building = f.name in ENVIRONMENT_BUILDING_SIZES;
         for (let i = 0; i < extra; i++) pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: 0, facility: f.name, crop: null, building, mode: null }] });
     });
-
-    // Add Crackle Generator (2x2) and Crackle Power Poles (1.5x1.5) when Electric Mode is active
-    const isEmodeActive = (document.getElementById('emode-simple-on')?.checked ?? true) || !!document.getElementById('emode-on')?.checked;
-    const hasElectricFacilities = (plan.coin_items || []).some(s => s.is_emode && s.status === 'producing') || (input.emode_facility_counts && Object.values(input.emode_facility_counts).some(c => c > 0));
-    const currentRv = layoutHomeLevel();
-    if ((isEmodeActive || currentRv >= 12) && hasElectricFacilities) {
-        // Crackle Generator (official 2x2 footprint, 11x11 square range)
-        pieces.push({
-            members: [{
-                x: 0, y: 0, w: 2, h: 2,
-                weight: 0,
-                facility: 'Crackle Generator',
-                generator: true,
-                sensitive: false
-            }]
-        });
-        // Crackle Power Poles (official 1.5x1.5 footprint, 7x7 square relay range, up to 2-3 poles for network extension)
-        const poleCount = currentRv >= 12 ? Math.min(3, Math.floor((currentRv - 10) / 2)) : 0;
-        for (let p = 0; p < poleCount; p++) {
-            pieces.push({
-                members: [{
-                    x: 0, y: 0, w: 1.5, h: 1.5,
-                    weight: 0,
-                    facility: 'Crackle Power Pole',
-                    powerPole: true,
-                    sensitive: false
-                }]
-            });
-        }
-    }
 
     return { pieces, unplaced: [...unplaced] };
 }
@@ -1649,10 +1637,18 @@ function renderHomelandLayout(plan) {
         const notes = [
             noRoom.length ? `No room found in RV ${homeLevel}'s plots for: ${noRoom.join(', ')}.` : '',
             unplaced.length ? `Not placed, size unknown: ${unplaced.join(', ')}.` : '',
-        ].filter(Boolean).join(' ');
-        document.getElementById('layout-summary').textContent = `${trips > 0
+            layout.unpowered ? `${layout.unpowered} electric units found no room within the Crackle Generator's reach.` : '',
+        ].filter(Boolean);
+        // The summary and each note are texts of their own, so each one translates.
+        const summary = document.getElementById('layout-summary');
+        summary.textContent = trips > 0
             ? `${formatNumber(Math.round(trips))} trips/hour to the Storage Unit, ${(walked / trips).toFixed(1)} tiles each on average, in the ${cells.length} plot${cells.length === 1 ? '' : 's'} open at RV ${homeLevel}.`
-            : 'Nothing in this plan is carried to the Storage Unit.'}${notes ? ` ${notes}` : ''}`;
+            : 'Nothing in this plan is carried to the Storage Unit.';
+        notes.forEach(note => {
+            const span = document.createElement('span');
+            span.textContent = note;
+            summary.append(' ', span);
+        });
         lastLayout = { layout, homeLevel };
         drawLayout(lastLayout);
         setStep('layout', 'done');
@@ -1664,7 +1660,9 @@ function renderHomelandLayout(plan) {
         document.getElementById('layout-summary').textContent = 'The layout couldn\'t be worked out.';
         setStep('layout', 'fail');
     };
-    layoutWorker.postMessage({ pieces, cells: cells.map(({ x, y, w, h }) => ({ x, y, w, h })) });
+    // The Crackle Generator and its poles go down after everything else (see `placePower`).
+    const maxPoles = POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0;
+    layoutWorker.postMessage({ pieces, cells: cells.map(({ x, y, w, h }) => ({ x, y, w, h })), maxPoles });
 }
 
 // Stops a layout still being worked out, so it can't land over a newer plan.
@@ -2544,6 +2542,9 @@ const MAX_ANIIMO_LEVEL = 4;
 // Aniimo in the game yet, so one isn't assumed, but a player who has one can say so.
 const ABILITY_DEFAULTS = { Perfumery: 3 };
 const defaultLevelFor = ability => ABILITY_DEFAULTS[ability] ?? MAX_ANIIMO_LEVEL;
+// The level a plan starts from for each ability until the player picks theirs: level 3, which
+// most players have; one with a level-4 Aniimo says so (and Opportunities suggests it).
+const STARTING_ANIIMO_LEVEL = 3;
 
 // Which abilities a level matters for: the ones a facility works with, since a crop's grow time
 // is fixed and an environment building's Aniimo level isn't known to change anything. Largest
@@ -2554,7 +2555,8 @@ function levelledAbilities() {
 }
 
 // The ability levels the player says they have, for the plan input. An ability left out is taken
-// as level 4; the game's own ceiling applies on top (see `max_level_for` in models.rs).
+// as `STARTING_ANIIMO_LEVEL`; the game's own ceiling applies on top (see `max_level_for` in
+// models.rs).
 let aniimoLevels = {};
 
 // What to send the solver for `setup`: the per-ability levels, or the player's roster (see
@@ -2567,7 +2569,7 @@ function aniimoInput(setup) {
 }
 
 function bestAniimoLevel(ability) {
-    return aniimoLevels[ability] ?? defaultLevelFor(ability);
+    return aniimoLevels[ability] ?? Math.min(STARTING_ANIIMO_LEVEL, defaultLevelFor(ability));
 }
 
 
