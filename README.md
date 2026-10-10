@@ -10,7 +10,7 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 
 ## Try It Online
 
-**[Launch Aniimax Web App](https://ae-bii.github.io/aniimax/)** - No installation required!
+**[Launch Aniimax Web App (E-mode edition)](https://wunyee.github.io/aniimax-emode/)** - No installation required!
 
 ## Features
 
@@ -50,8 +50,8 @@ Updated for the full release, with a joint LP-based facility-allocation engine f
 ### Building from Source
 
 ```bash
-git clone https://github.com/ae-bii/aniimax.git
-cd aniimax
+git clone https://github.com/wunyee/aniimax-emode.git
+cd aniimax-emode
 cargo build --release
 ```
 
@@ -155,7 +155,7 @@ Options:
   -V, --version                      Print version
 ```
 
-> **CLI coverage:** the CLI exposes the 10 facilities listed above; any facility without a flag counts as not owned. The CLI also doesn't model environment coverage, so it can recommend a crop that needs a Heat Furnace, Cooling Unit or Sunlamp you don't own. For full coverage, use the [web app](https://ae-bii.github.io/aniimax/) instead.
+> **CLI coverage:** the CLI exposes the 10 facilities listed above; any facility without a flag counts as not owned. The CLI also doesn't model environment coverage, so it can recommend a crop that needs a Heat Furnace, Cooling Unit or Sunlamp you don't own. For full coverage, use the [web app](https://wunyee.github.io/aniimax-emode/) instead.
 
 ## Example Output
 

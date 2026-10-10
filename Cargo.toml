@@ -3,7 +3,7 @@ name = "aniimax"
 version = "0.16.0"
 edition = "2021"
 description = "Production path optimizer for Aniimo Homeland"
-repository = "https://github.com/ae-bii/aniimax"
+repository = "https://github.com/wunyee/aniimax-emode"
 license = "MIT"
 
 [lib]
