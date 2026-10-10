@@ -4274,7 +4274,7 @@ function scheduledRows(plan, steps) {
                     facility, facility_count: 1, item_name: null, items,
                     producing: `${items.map(item => `<span>${item}</span>`).join(' / ')}`,
                     is_emode: unit.electric, aniimo: unit.electric ? null : aniimo, status: 'producing',
-                    reason: `Switches recipes (#${unit.number}, see Switching recipes)`, scheduled: true,
+                    reason: `Switches recipes (#${unit.number}, see the switching plan)`, scheduled: true,
                 });
             });
         }
@@ -4309,7 +4309,10 @@ function rotationSection(plan) {
                         <td data-label="Aniimo">${aniimo}</td>
                         <td data-label="When to switch">${why}</td>
                     </tr>`;
-    let body = '';
+    // Units that never switch in one body, then each that switches in a body of its own, so its
+    // stretches read as one unit's.
+    let fixedBody = '';
+    const unitBodies = [];
     let hours = 0;
     for (const facility of ['Woodworking Bench', 'Chimney Kiln']) {
         const schedule = dailySchedule(facility, plan);
@@ -4317,11 +4320,11 @@ function rotationSection(plan) {
         hours = Math.max(hours, schedule.hours || 0);
         const { fixed, switching } = scheduleGroups(schedule);
         fixed.forEach(group => {
-            body += row(`<span>${facility}</span> ${unitNumbers(group.numbers)}`, '<span>The whole time</span>',
+            fixedBody += row(`<span>${facility}</span> ${unitNumbers(group.numbers)}`, '<span>The whole time</span>',
                 `<span>${prettyItem(group.item)}</span>`, aniimoOf(facility, group.electric), '<span>Never switches</span>');
         });
         switching.forEach(unit => {
-            body += `<tr class="facility-plan-group"><td colspan="5"><span>${facility}</span> #${unit.number} · <span>switch ${unit.stretches.length - 1} times</span></td></tr>`;
+            let body = `<tr class="facility-plan-group rotation-unit-head"><td colspan="5"><span>${facility}</span> #${unit.number} (${unit.electric ? '⚡' : '<span>Aniimo</span>'}) · <span>switch ${unit.stretches.length - 1} times</span></td></tr>`;
             unit.stretches.forEach((d, i) => {
                 // When to switch: as much of the new tier's input as is in stock by then.
                 const input = d.item && schedule.inputOf[d.item];
@@ -4336,15 +4339,16 @@ function rotationSection(plan) {
                     : '<span>Idle while the tier below builds up</span>';
                 body += row(`<span>${facility}</span> #${unit.number}`, span(d.from, d.to), producing, aniimoOf(facility, unit.electric), trigger);
             });
+            unitBodies.push(`<tbody class="rotation-unit">${body}</tbody>`);
         });
     }
-    if (!body) return '';
+    if (!fixedBody && !unitBodies.length) return '';
     const done = every === 24
         ? `<span>Done on day ${Math.ceil(hours / 24)}</span>`
         : `<span>Done about</span> ${at(Math.ceil(hours))} <span>after production starts</span>`;
     return `
         <div class="facility-category">
-            <h4 class="facility-category-title"><span>Switching recipes</span></h4>
+            <h4 class="facility-category-title"><span>Switching plan</span></h4>
             <p class="hint small"><span>Done as soon as switching at most every ${every} hours allows, with the fewest switches.</span> <span>Days and times count from when production starts.</span> <span>Switch at the time listed, once the new recipe's ingredient is at about the count shown; the counts are a rough guide. The level-up time above assumes switching as often as it takes.</span></p>
             <div class="table-wrapper">
                 <table class="facility-plan-table rotation-table">
@@ -4357,7 +4361,7 @@ function rotationSection(plan) {
                             <th>When to switch</th>
                         </tr>
                     </thead>
-                    <tbody>${body}</tbody>
+                    ${fixedBody ? `<tbody>${fixedBody}</tbody>` : ''}${unitBodies.join('')}
                 </table>
             </div>
             ${hours ? `<p class="hint small">${done}</p>` : ''}
@@ -4824,11 +4828,14 @@ function renderFacilityPlan(plan) {
         .concat(scheduled.filter(row => row.is_emode));
     const powerSections = powerSection(electricSteps);
 
-    // Then every facility's work in one place, by category: what the sections above show by
-    // building and on electricity too, so every plot and unit is in one list.
+    // Then the rest by category: Materials and Aniimo Materials only what the sections above
+    // don't show, Materials Processing every unit, on electricity or not, in one list.
     const byCategory = new Map(FACILITY_CATEGORIES.map(c => [c, []]));
+    const outside = [...outsideOf.values()].flat();
+    const shownAbove = step => !!step.environment || outside.includes(step) || electricSteps.includes(step);
     steps.filter(step => !replaced(step)).concat(scheduled).forEach(step => {
         const category = FACILITY_CATEGORY_BY_NAME.get(step.facility) || 'Materials Processing';
+        if (category !== 'Materials Processing' && shownAbove(step)) return;
         byCategory.get(category).push(step);
     });
 
@@ -4842,13 +4849,7 @@ function renderFacilityPlan(plan) {
             </div>
         `;
     }).join('');
-    const summary = categorySections ? `
-            <div class="facility-category plan-summary-head">
-                <h4 class="facility-category-title"><span>All production</span></h4>
-                <p class="hint small">Every facility's work in one list, including what the sections above show by growing environment and on electricity.</p>
-            </div>${categorySections}` : '';
-
-    container.innerHTML = environmentSections + powerSections + summary + rotationSection(plan);
+    container.innerHTML = environmentSections + powerSections + categorySections + rotationSection(plan);
 }
 
 // Re-renders "Your Rate" from `lastPlan` at whichever unit is currently selected in the

@@ -2419,6 +2419,26 @@ tr:hover .skip-row,
     padding-top: 0.25rem;
 }
 
+/* The switching plan: each unit that switches is a band of its own, its stretches marked down
+   the left in the accent color so they read as that one unit's. */
+.rotation-table tbody.rotation-unit tr td:first-child {
+    border-left: 3px solid var(--accent);
+    padding-left: 0.6rem;
+}
+
+.rotation-table tbody.rotation-unit tr.rotation-unit-head td {
+    padding: 0.5rem 0.6rem;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.rotation-table tbody.rotation-unit + tbody.rotation-unit tr.rotation-unit-head td,
+.rotation-table tbody + tbody.rotation-unit tr.rotation-unit-head td {
+    border-top: 0.75rem solid transparent;
+    background-clip: padding-box;
+}
+
 /* Saying which Aniimo you have: ability levels under Best, the roster under My Aniimo. */
 .aniimo-setup-panel {
     padding: 0.1rem 0 0.9rem;
