@@ -12,12 +12,14 @@
 // for. Anything else, including crops that need no environment, may stand anywhere. Pieces may touch but not overlap, sit on a quarter-tile grid (the smallest step in
 // any footprint), and may be turned a quarter at a time.
 //
-// A Crackle Generator piece (a member marked `generator`) goes down first, then any Crackle Power
-// Pole pieces (`powerPole`). Power reaches the generator's 11x11 range and the 7x7 of every pole
-// touching a range already powered. Every unit on electricity (`is_emode`) costs `POWER_PENALTY`
-// more anywhere power doesn't reach, while the generator and each pole cost that much less for
-// each electric unit power then reaches: so the units on it gather around them near the Storage
-// Unit, and the rest still go by their walking alone.
+// Units on electricity (`is_emode`) go down in turn with the rest, each where its walking costs
+// least; right after the last of them, the Crackle Generator (a member marked `generator`)
+// wherever its range reaches the most, then any Crackle Power Poles (`powerPole`) for those it
+// doesn't; then everything else. Power
+// reaches the generator's 11x11 range and the 7x7 of every pole touching a range already
+// powered. An electric unit costs `POWER_PENALTY` more anywhere power doesn't reach, while the
+// generator and each pole cost that much less for each electric unit power then reaches, so
+// when pieces are lifted and put back the units on electricity stay where power is.
 //
 // Busiest pieces for their size go down first, each where it costs least; then each is lifted
 // and put back wherever is cheapest with the rest in place, until nothing moves. This is a
@@ -39,6 +41,9 @@ const POWER_PENALTY = 1e5;
 // What a pole saves for each tile of ground it adds to power's reach: far less than a unit
 // powered (a 7x7 range is 49 tiles), but more than the walking a unit could save.
 const POWER_GROUND = 100;
+// What the generator costs for each tile it stands from its target (see `bestGeneratorSpot`):
+// enough to draw it there before anything else is down, far less than a unit it powers.
+const POWER_TARGET_WEIGHT = 1000;
 
 // `pieces`: each either
 // - `{ members: [{ x, y, w, h, weight, sensitive }] }`, one rigid piece (a facility unit), whose
@@ -58,6 +63,17 @@ export function layOut(pieces, options = {}) {
     const { storage = { w: 2, h: 2 }, passes = 6, cells = null } = options;
     const storageRect = { x: -storage.w / 2, y: -storage.h / 2, w: storage.w, h: storage.h };
     let tried = 0;
+    // With a Crackle Generator, a first layout without it or its poles finds where the units on
+    // electricity go by their walking alone; the generator then aims for the spot whose range
+    // reaches the most of them there (see `POWER_TARGET_WEIGHT`).
+    let { powerTarget } = options;
+    const powerPiece = piece => !piece.cluster && piece.members.some(m => m.generator || m.powerPole);
+    if (powerTarget === undefined && pieces.some(powerPiece)) {
+        const plain = pieces.filter(piece => !powerPiece(piece));
+        const first = layOut(plain, { ...options, powerTarget: null });
+        tried += first.tried;
+        powerTarget = bestGeneratorSpot(first.pieces.flatMap(piece => piece.members).filter(m => m.is_emode));
+    }
     // Within the open cells: the parts of it inside each cell add up to all of it.
     const inside = r => !cells || cells.reduce((sum, c) => sum + overlapArea(r, c), 0) >= r.w * r.h - EPSILON;
     const shapes = pieces.map(piece => (piece.cluster ? clusterOrientations(piece) : orientations(piece.members)));
@@ -67,11 +83,15 @@ export function layOut(pieces, options = {}) {
     const isGenerator = piece => !piece.cluster && piece.members.some(m => m.generator);
     const isPole = piece => !piece.cluster && piece.members.some(m => m.powerPole);
     const isElectric = piece => !piece.cluster && piece.members.some(m => m.is_emode);
-    const firstOf = piece => (isGenerator(piece) ? 2 : isPole(piece) ? 1 : 0);
-    const order = pieces
-        .map((piece, i) => ({ i, first: firstOf(piece), density: weightOf(piece) / Math.max(areaOf(piece), EPSILON) }))
-        .sort((a, b) => b.first - a.first || b.density - a.density || areaOf(pieces[b.i]) - areaOf(pieces[a.i]))
+    const byDensity = pieces
+        .map((piece, i) => ({ i, density: weightOf(piece) / Math.max(areaOf(piece), EPSILON) }))
+        .filter(p => !isGenerator(pieces[p.i]) && !isPole(pieces[p.i]))
+        .sort((a, b) => b.density - a.density || areaOf(pieces[b.i]) - areaOf(pieces[a.i]))
         .map(p => p.i);
+    // The generator and its poles go first, while there's room for them (see `powerTarget`), then
+    // the units on electricity, so even the least busy finds room where power reaches.
+    const power = pieces.map((piece, i) => i).filter(i => isGenerator(pieces[i])).concat(pieces.map((piece, i) => i).filter(i => isPole(pieces[i])));
+    const order = [...power, ...byDensity.filter(i => isElectric(pieces[i])), ...byDensity.filter(i => !isElectric(pieces[i]))];
     const generatorIndex = pieces.findIndex(isGenerator);
     const poleIndices = pieces.map((piece, i) => (isPole(piece) ? i : -1)).filter(i => i >= 0);
     const electricIndices = pieces.map((piece, i) => (isElectric(piece) ? i : -1)).filter(i => i >= 0);
@@ -161,7 +181,10 @@ export function layOut(pieces, options = {}) {
         if (i === generatorIndex || poleIndices.includes(i)) {
             const ranges = poweredRanges(i, rects[0]);
             const reached = electricIndices.filter(e => placedRects.has(e) && placedRects.get(e).some(r => reaches(ranges, r))).length;
-            if (i === generatorIndex) return -POWER_PENALTY * reached;
+            if (i === generatorIndex) {
+                const toTarget = powerTarget ? Math.hypot(rects[0].x + rects[0].w / 2 - powerTarget.x, rects[0].y + rects[0].h / 2 - powerTarget.y) : 0;
+                return -POWER_PENALTY * reached + POWER_TARGET_WEIGHT * toTarget;
+            }
             // A pole off the network powers nothing, so it may as well sit anywhere else. On it,
             // it's also worth the ground it adds to what power reaches, so poles put down before
             // the units on electricity spread the power out for them instead of crowding in.
@@ -382,6 +405,29 @@ const GENERATOR_RANGE = 11;
 const POLE_RANGE = 7;
 const GENERATOR_SIZE = 2;
 const POLE_SIZE = 1.5;
+
+// The center for a Crackle Generator whose 11x11 range reaches the most of `units` (any part of
+// one counts), and of those, the nearest them all; null with no units.
+function bestGeneratorSpot(units) {
+    if (!units.length) return null;
+    const half = GENERATOR_RANGE / 2;
+    const x0 = Math.min(...units.map(u => u.x)) - half;
+    const y0 = Math.min(...units.map(u => u.y)) - half;
+    const x1 = Math.max(...units.map(u => u.x + u.w)) + half;
+    const y1 = Math.max(...units.map(u => u.y + u.h)) + half;
+    let best = null;
+    for (let y = y0; y <= y1; y += 0.5) {
+        for (let x = x0; x <= x1; x += 0.5) {
+            const range = { x: x - half, y: y - half, w: GENERATOR_RANGE, h: GENERATOR_RANGE };
+            const reached = units.filter(u => overlapArea(range, u) > EPSILON);
+            const spread = reached.reduce((sum, u) => sum + Math.hypot(u.x + u.w / 2 - x, u.y + u.h / 2 - y), 0);
+            if (!best || reached.length > best.count || (reached.length === best.count && spread < best.spread - EPSILON)) {
+                best = { x, y, count: reached.length, spread };
+            }
+        }
+    }
+    return { x: best.x, y: best.y };
+}
 
 // Places the Crackle Generator and its poles on a laid-out homeland, after everything else, and
 // makes sure every unit on electricity (`is_emode`) is powered: any part of it in the
