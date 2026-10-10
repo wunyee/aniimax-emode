@@ -4034,6 +4034,11 @@ function planPowerLayout(units, maxPoles) {
         bounds.y1 = Math.max(bounds.y1, r.y + r.size);
         return true;
     };
+    // Poles go down first, as many as the units' ground needs past what the generator's range
+    // holds (some reach past it), while there's still room for them at power's edge.
+    const ground = units.reduce((sum, u) => sum + u.w * u.h, 0);
+    const ahead = Math.min(maxPoles, Math.max(0, Math.ceil((ground - GENERATOR_POWER_RANGE ** 2) / 35)));
+    while (poles.length < ahead && addPole());
     const placed = [];
     const unplaced = [];
     for (const unit of units) {
@@ -4046,7 +4051,37 @@ function planPowerLayout(units, maxPoles) {
         placed.push({ ...unit, x: spot.x, y: spot.y });
         mark(used, spot.x, spot.y, unit.w, unit.h);
     }
-    return { generator, ranges, poles, placed, unplaced };
+    // Any pole the units are as well powered without is taken back up, the last ones first:
+    // power still reaches through the poles touching a range already powered.
+    const overlap = (a, b) => Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y);
+    const asRect = r => ({ x: r.x, y: r.y, w: r.size, h: r.size });
+    const networkOf = list => {
+        const reach = [asRect(ranges[0])];
+        let left = [...list];
+        for (let grew = true; grew && left.length;) {
+            grew = false;
+            left = left.filter(k => {
+                if (!reach.some(r => overlap(r, poles[k]))) return true;
+                reach.push(asRect(ranges[k + 1]));
+                grew = true;
+                return false;
+            });
+        }
+        return reach;
+    };
+    let kept = poles.map((_, k) => k);
+    for (let k = poles.length - 1; k >= 0; k--) {
+        const without = kept.filter(j => j !== k);
+        const reach = networkOf(without);
+        if (placed.every(u => reach.some(r => overlap(r, u)))) kept = without;
+    }
+    return {
+        generator,
+        ranges: [ranges[0], ...kept.map(k => ranges[k + 1])],
+        poles: kept.map(k => poles[k]),
+        placed,
+        unplaced,
+    };
 }
 
 // The electric units `rows` (a plan's producing E-mode rows) take, one per physical unit, each
@@ -4133,7 +4168,7 @@ function powerSection(rows) {
     const cap = getTargetEmodeWatts();
     const supply = getPowerGridRate() >= 1.15 ? ' · 120% supply' : '';
     const missing = map.unplaced.length
-        ? `<p class="hint small">Didn't fit in range: ${map.unplaced.map(u => u.facility).join(', ')}. Place them within reach of another power pole.</p>`
+        ? `<p class="hint small"><span>Didn't fit in range:</span> ${map.unplaced.map(u => `<span>${u.facility}</span>`).join(', ')}<span>. </span><span>Place them within reach of another power pole.</span></p>`
         : '';
     return `
         <div class="facility-category">
