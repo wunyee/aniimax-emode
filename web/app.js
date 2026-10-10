@@ -407,8 +407,13 @@ function updatePowerGauge(customCounts = null) {
     const simpleVal = document.getElementById('simple-power-gauge-value');
     const simpleFill = document.getElementById('simple-power-gauge-fill');
     if (simpleVal && simpleFill) {
-        const targetLabel = rate >= 1.15 ? ` (120% cap: ${targetWatts}W)` : '';
-        simpleVal.textContent = `${totalWatts}W / ${maxWatts}W (${pct}%)${targetLabel}`;
+        // The 120% cap is a text of its own, so it translates.
+        simpleVal.textContent = `${totalWatts}W / ${maxWatts}W (${pct}%)`;
+        if (rate >= 1.15) {
+            const cap = document.createElement('span');
+            cap.textContent = `(120% cap: ${targetWatts}W)`;
+            simpleVal.append(' ', cap);
+        }
         simpleFill.style.width = `${Math.min(100, (totalWatts / maxWatts) * 100)}%`;
         simpleFill.classList.toggle('overload', totalWatts > targetWatts);
     }
@@ -598,6 +603,8 @@ function attachEmodeHandlers() {
     const simpleToggle = document.getElementById('emode-simple-on');
     if (simpleToggle) {
         simpleToggle.addEventListener('change', () => {
+            simpleToggle.dataset.wanted = simpleToggle.checked ? '1' : '0';
+            document.getElementById('emode-simple-details').hidden = !simpleToggle.checked;
             updatePowerGauge();
             saveInputsToStorage();
         });
@@ -611,13 +618,12 @@ function attachEmodeHandlers() {
     }
 }
 
+// Simple mode's E-mode switch: off and locked below RV 12, where there's no generator, and back to
+// what the player had it at above; the generator, supply rate and power bar show only while it's
+// on.
 function updateSimpleEmodeState() {
     const homeLevel = selectedHomeLevel();
-    const hint = document.getElementById('emode-simple-hint');
     const toggle = document.getElementById('emode-simple-on');
-    const rateField = document.getElementById('emode-simple-rate-field');
-    const genField = document.getElementById('emode-simple-generator-field');
-    const gauge = document.getElementById('simple-power-gauge-container');
 
     const defaultWatts = GENERATOR_WATTS_BY_HOME_LEVEL[homeLevel] || DEFAULT_GENERATOR_WATTS;
     const simpleGen = document.getElementById('simple-generator-capacity');
@@ -625,18 +631,13 @@ function updateSimpleEmodeState() {
     if (simpleGen) simpleGen.value = String(defaultWatts);
     if (genSelect) genSelect.value = String(defaultWatts);
 
-    if (homeLevel < 12) {
-        if (toggle) toggle.disabled = true;
-        if (rateField) rateField.style.opacity = '0.5';
-        if (genField) genField.style.opacity = '0.5';
-        if (gauge) gauge.style.opacity = '0.5';
-        if (hint) hint.innerHTML = '<span style="color: var(--text-muted);">⚡ Electric Mode unlocks at <strong>RV 12</strong>.</span>';
-    } else {
-        if (toggle) toggle.disabled = false;
-        if (rateField) rateField.style.opacity = '1';
-        if (genField) genField.style.opacity = '1';
-        if (gauge) gauge.style.opacity = '1';
-        if (hint) hint.innerHTML = `Auto-balances power within generator limit. Frees Aniimo workers on electric units; remaining units run manually with Aniimo.`;
+    if (toggle) {
+        if (toggle.dataset.wanted === undefined) toggle.dataset.wanted = toggle.checked ? '1' : '0';
+        const locked = homeLevel < 12;
+        toggle.disabled = locked;
+        toggle.checked = !locked && toggle.dataset.wanted === '1';
+        document.getElementById('emode-simple-locked').hidden = !locked;
+        document.getElementById('emode-simple-details').hidden = !toggle.checked;
     }
     updatePowerGauge();
 }
