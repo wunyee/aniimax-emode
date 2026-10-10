@@ -2535,7 +2535,7 @@ document.addEventListener('aniimax-language-change', () => {
 async function loadRecipeIndex() {
     try {
         recipeIndex = JSON.parse(await callWorker('get_all_items'))
-            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none' }))
+            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none', currency: r.sell_currency || 'coins' }))
             .sort((a, b) => a.facility.localeCompare(b.facility) || a.name.localeCompare(b.name));
         renderRecipeOptions();
         renderSkippedRecipes();
@@ -3050,14 +3050,46 @@ function renderLevelUp(plan) {
     const coinsNote = surplus.length
         ? `<p class="level-up-coins"><span>Surplus:</span> <strong>${surplus.join(', ')}</strong></p>`
         : '';
+    const slowNote = slowestReason(plan, report.requirements.find(r => r.seconds !== null && r.seconds > 0 && r.seconds >= slowest * (1 - 1e-6)));
     lines.innerHTML = `
         <table class="level-up-lines">
             <thead><tr><th>Cost</th><th>Need</th><th>Have</th><th id="level-up-rate-head"></th><th>Ready in</th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
-        ${coinsNote}`;
+        ${coinsNote}${slowNote}`;
     document.getElementById('level-up-rate-head').appendChild(select);
     rateBlock.style.display = 'none';
+}
+
+// Why the level-up's slowest cost `r` takes as long as it does: for a Bench or Kiln tier,
+// whether its Wood Blocks or Mineral Sand take that long to come in (the raw material sets the
+// pace) or come in sooner and the making takes longer; for Home Coins, earning them. Empty if
+// there's nothing to say.
+function slowestReason(plan, r) {
+    if (!r) return '';
+    const name = r.name === 'coins' ? 'Home Coins' : ITEM_NAMES[r.name] || prettyItem(r.name);
+    const note = text => `<p class="level-up-note slowest-note">${text}</p>`;
+    if (r.name === 'coins') return note(`Slowest: ${name}. Earning them sets the pace.`);
+    const chain = LEVEL_UP_CHAINS.find(c => c.includes(r.name));
+    if (!chain) return '';
+    const raw = chain[0];
+    const rawName = ITEM_NAMES[raw] || prettyItem(raw);
+    if (r.name === raw) return note(`Slowest: ${name}. Raw materials set the pace.`);
+    // How much raw material is still to come in for what's left of it, after the stock of every
+    // tier in between.
+    const stock = Object.fromEntries(lastPlanInput?.level_up?.stock || []);
+    let need = Math.max(0, r.need - (stock[r.name] || 0));
+    for (let t = chain.indexOf(r.name); t > 0 && need > 0; t--) {
+        const amount = recipeIndex.find(x => x.name === chain[t])?.amounts?.[0] || 1;
+        need = Math.max(0, need * amount - (stock[chain[t - 1]] || 0));
+    }
+    const rate = (plan.byproduct_rates || []).filter(([resource]) => byproductItemOf(resource) === raw).reduce((sum, [, v]) => sum + v, 0);
+    if (!(rate > 0)) return '';
+    const rawSeconds = need / rate;
+    const facility = recipeIndex.find(x => x.name === r.name)?.facility || '';
+    return rawSeconds >= r.seconds * 0.97
+        ? note(`Slowest: ${name}. Raw materials set the pace: the ${rawName} it needs takes ${formatDuration(rawSeconds)} to come in.`)
+        : note(`Slowest: ${name}. Making it sets the pace: the ${rawName} it needs is in after ${formatDuration(rawSeconds)}, but making it at the ${facility} takes longer.`);
 }
 
 // The seeds a plan plants: one seed per planting of each Farmland and Woodland crop, and what
@@ -3220,7 +3252,19 @@ function prettyReason(reason) {
     if (!reason) return reason;
     const names = list => list.split(', ').map(prettyItem).join(', ');
     return reason
-        .replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + names(list));
+        .replace(/^Used for ([^;]+)/, (_, list) => 'Used for ' + names(list))
+        .replace(/takes turns with (.+)$/, (_, list) => 'takes turns with ' + names(list));
+}
+
+// A row's reason as the player reads it: Aniipods and Aniimo EXP aren't sold but used, so what
+// "sells directly" is used directly.
+function rowReason(step) {
+    const currency = recipeIndex.find(r => r.name === step.item_name)?.currency;
+    const used = currency === 'aniipods' || currency === 'aniimo_exp';
+    const reason = used && step.reason
+        ? step.reason.replace(/^Sells directly$/, 'Used directly').replace(/the rest sells directly$/, 'the rest is used directly')
+        : step.reason;
+    return prettyReason(reason);
 }
 
 // Keys ("Facility|item") of the shown plan's rows that rely on recipes not yet checked in game;
@@ -3489,7 +3533,7 @@ function planRows(rows) {
                         <td data-label="Count">${step.facility_count}</td>
                         <td data-label="Producing">${step.producing ?? (step.item_name ? prettyItem(step.item_name) : '-')}${unverifiedRowKeys.has(`${step.facility}|${step.item_name}`) ? '<span class="tag unverified" title="Not yet checked in game">unverified</span>' : ''}${step.item_name && step.status === 'producing' ? `<button type="button" class="skip-row" data-skip="${step.item_name}" title="Can't make this? Skip it and plan again" aria-label="Skip ${prettyItem(step.item_name)} and plan again">✕</button>` : ''}</td>
                         <td data-label="Aniimo">${aniimoLabel(step)}</td>
-                        <td data-label="Why">${prettyReason(step.reason)}</td>
+                        <td data-label="Why">${rowReason(step)}</td>
                     </tr>
                 `).join('');
 }
