@@ -788,6 +788,10 @@ pub struct JsPlanInput {
     /// [`crate::models::PowerGrid`]); `emode_facility_counts` is then only for the backup planner.
     #[serde(default)]
     pub power_grid: Option<JsPowerGrid>,
+    /// Whether the player switches Woodworking Benches and Chimney Kilns between tiers now and
+    /// then (see [`crate::models::FacilityCounts::rotates`]).
+    #[serde(default)]
+    pub rotate_tiers: bool,
 }
 
 /// See [`JsPlanInput::power_grid`].
@@ -1668,6 +1672,7 @@ impl PreparedInput {
             serde_json::to_string(&empty_production_plan(false, Some(format!("Invalid input: {}", e)))).unwrap_or_default()
         })?;
         let mut facility_counts = input.facility_counts();
+        facility_counts.set_rotation(input.rotate_tiers);
         let module_levels = ModuleLevels {
             ecological_module: input.modules.ecological_module,
             kitchen_module: input.modules.kitchen_module,

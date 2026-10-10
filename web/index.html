@@ -226,6 +226,24 @@
                                 <span>Aniipods</span>
                             </label>
                         </div>
+                        <div class="input-row rotate-tiers-row">
+                            <label class="priority-switch">
+                                <input type="checkbox" role="switch" id="rotate-tiers">
+                                <span class="switch-track" aria-hidden="true"></span>
+                                <span>Switch Woodworking Bench and Chimney Kiln recipes by hand</span>
+                            </label>
+                            <div class="input-field" id="rotate-hours-field" hidden>
+                                <label for="rotate-hours">Every</label>
+                                <select id="rotate-hours">
+                                    <option value="4">4 hours</option>
+                                    <option value="6">6 hours</option>
+                                    <option value="8">8 hours</option>
+                                    <option value="12" selected>12 hours</option>
+                                    <option value="24">24 hours</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="hint small">Each Bench and Kiln makes one tier unless you switch it now and then; with switching, one can share its time between tiers, and the plan shows when to switch each.</p>
                     </div>
                 </div>
 

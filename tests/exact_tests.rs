@@ -231,8 +231,8 @@ fn exact_level_up_makes_its_items_from_byproducts() {
 }
 
 // A Bench or Kiln is set to one recipe and left on it, so Standard Planks, made from Rough
-// Lumber, take two Benches: one Bench (and one Kiln) can't make them at all, and with two each
-// recipe gets a whole unit of its own.
+// Lumber, take two Benches: one Bench (and one Kiln) can't make them at all, unless the player
+// switches it between tiers, and with two each recipe gets a whole unit of its own.
 #[test]
 fn exact_level_up_keeps_each_bench_on_one_recipe() {
     let Some(items) = load_items() else { return };
@@ -246,6 +246,16 @@ fn exact_level_up_keeps_each_bench_on_one_recipe() {
     ]);
     let fastest = solve_exact(&items, "coins", &one, &ModuleLevels::default(), Goal::LevelUp(&cost), None, None).unwrap();
     assert!(fastest.objective < 1e-9, "pace {} with one Bench and one Kiln", fastest.objective);
+
+    // Unless the player switches them between tiers now and then: then one of each takes turns.
+    let mut rotating = one.clone();
+    rotating.set_rotation(true);
+    let (turns, _) = solve_level_up(&items, &rotating, &cost);
+    let shown = to_production_plan(&turns, &items, "coins", &rotating);
+    let planks = shown.coin_items.iter().find(|s| s.item_name.as_deref() == Some("standard_planks")).unwrap();
+    assert!(planks.reason.contains("takes turns with rough_lumber"), "{}", planks.reason);
+    let bench_busy: f64 = shown.coin_items.iter().filter(|s| s.facility == "Woodworking Bench").filter_map(|s| s.busy_units).sum();
+    assert!(bench_busy <= 1.0 + 1e-6, "Bench busy {bench_busy}");
 
     let two = FacilityCounts::only(&[
         ("Farmland", 6, 2),

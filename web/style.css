@@ -873,6 +873,19 @@ tbody tr:first-child td {
     aspect-ratio: auto;
 }
 
+/* What each shared Bench or Kiln makes each round of switching (see rotationSection). */
+.rotation-schedule {
+    margin: 0.25rem 0 1rem;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+    line-height: 1.7;
+}
+
+.rotate-tiers-row {
+    align-items: center;
+    margin-top: 0.75rem;
+}
+
 /* A legend line wraps as one block beside its swatch. */
 .power-legend-text {
     flex: 1;

@@ -1257,6 +1257,9 @@ pub struct FacilityCounts {
     crew: Option<Crew>,
     /// The generator, when the plan picks which units run on electricity (see [`PowerGrid`]).
     power: Option<PowerGrid>,
+    /// Whether the player switches each Woodworking Bench and Chimney Kiln between tiers now and
+    /// then, so level-up materials share their units' time instead of each keeping whole units.
+    rotate: bool,
 }
 
 /// A generator's power, for a plan that picks which units of each electric facility run on it
@@ -1278,6 +1281,7 @@ impl Default for FacilityCounts {
             default_tier: (1, 1),
             crew: None,
             power: None,
+            rotate: false,
         }
     }
 }
@@ -1303,6 +1307,18 @@ impl FacilityCounts {
     /// The generator, if the plan picks which units run on it.
     pub fn power(&self) -> Option<&PowerGrid> {
         self.power.as_ref()
+    }
+
+    /// Lets level-up materials share their units' time (see [`FacilityCounts::rotates`]).
+    pub fn set_rotation(&mut self, rotate: bool) -> &mut Self {
+        self.rotate = rotate;
+        self
+    }
+
+    /// Whether the player switches Woodworking Benches and Chimney Kilns between tiers now and
+    /// then, so their recipes share the units' time.
+    pub fn rotates(&self) -> bool {
+        self.rotate
     }
 
     /// Creates an empty `FacilityCounts` (every facility defaults to count=1, level=1).
@@ -1340,6 +1356,7 @@ impl FacilityCounts {
             default_tier: (0, 1),
             crew: None,
             power: None,
+            rotate: false,
         };
         for (name, count, level) in pairs {
             fc.set(name, *count, *level);
@@ -1355,6 +1372,7 @@ impl FacilityCounts {
             default_tier: (1, 99),
             crew: None,
             power: None,
+            rotate: false,
         }
     }
 

@@ -344,13 +344,63 @@ function activePowerGrid() {
     return { watts, capacity: getTargetEmodeWatts() };
 }
 
-// How many units of each electric facility a plan works on electricity (`electric`) or by hand.
+// Whether the player switches Woodworking Benches and Chimney Kilns between tiers (see
+// `JsPlanInput::rotate_tiers` in wasm.rs), and how many hours each round of switching takes.
+function rotatesTiers() {
+    return isLevelUpStrategy() && !!document.getElementById('rotate-tiers')?.checked;
+}
+
+function rotationHours() {
+    return Number(document.getElementById('rotate-hours')?.value) || 12;
+}
+
+// A row whose recipe shares its units' time with others at the facility: a level-up material,
+// when the player switches the Benches and Kilns between tiers.
+const sharesUnits = step => step.status === 'producing' && !!lastPlanInput?.rotate_tiers
+    && !!recipeIndex.find(r => r.name === step.item_name)?.levelUpMaterial;
+
+// The physical units behind `rows` that share their time (see `sharesUnits`), per facility and
+// whether on electricity: lowest tier first, each unit's day filled before the next, as
+// `{ facility, is_emode, jobs: [{ step, share }] }` with `share` the part of the unit's time.
+function sharedUnits(rows) {
+    const tierOf = item => {
+        const chain = LEVEL_UP_CHAINS.find(c => c.includes(item));
+        return chain ? chain.indexOf(item) : 99;
+    };
+    const groups = new Map();
+    rows.filter(sharesUnits).forEach(step => {
+        const key = `${step.facility}|${!!step.is_emode}`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(step);
+    });
+    const units = [];
+    groups.forEach(steps => {
+        let unit = null;
+        [...steps].sort((a, b) => tierOf(a.item_name) - tierOf(b.item_name)).forEach(step => {
+            let left = step.busy_units ?? step.facility_count;
+            while (left > 1e-6) {
+                if (!unit || unit.free <= 1e-6) {
+                    unit = { facility: step.facility, is_emode: !!step.is_emode, jobs: [], free: 1 };
+                    units.push(unit);
+                }
+                const share = Math.min(left, unit.free);
+                unit.jobs.push({ step, share });
+                unit.free -= share;
+                left -= share;
+            }
+        });
+        unit = null;
+    });
+    return units;
+}
+
+// How many units of each electric facility a plan works on electricity (`electric`) or by hand;
+// units shared between tiers count once.
 function planUnits(plan, electric) {
     const counts = {};
-    for (const step of plan.coin_items || []) {
-        if (step.status !== 'producing' || !!step.is_emode !== electric || !(FACILITY_POWER_WATTS[step.facility] > 0)) continue;
-        counts[step.facility] = (counts[step.facility] || 0) + step.facility_count;
-    }
+    const rows = (plan.coin_items || []).filter(step => step.status === 'producing' && !!step.is_emode === electric && FACILITY_POWER_WATTS[step.facility] > 0);
+    rows.filter(step => !sharesUnits(step)).forEach(step => { counts[step.facility] = (counts[step.facility] || 0) + step.facility_count; });
+    sharedUnits(rows).forEach(unit => { counts[unit.facility] = (counts[unit.facility] || 0) + 1; });
     return counts;
 }
 
@@ -720,7 +770,7 @@ function getPersistedFieldIds() {
         'rate-unit', 'season-on', 'layout-sim-on', 'season-currency-per-day',
         'aniimo-best', 'aniimo-minimum', 'aniimo-custom',
         'power-grid-rate', 'emode-simple-on', 'simple-power-grid-rate',
-        'generator-capacity', 'simple-generator-capacity', 'level-up-exp', 'level-up-aniipods',
+        'generator-capacity', 'simple-generator-capacity', 'level-up-exp', 'level-up-aniipods', 'rotate-tiers', 'rotate-hours',
         ...SEASON.crops.map(crop => `season-min-${crop}`)
     ];
 }
@@ -1122,6 +1172,10 @@ function improvementCandidates(base, setup) {
             input: { ...base, exclude: base.exclude.filter(name => name !== recipe.name) },
         });
     }
+    // Switching the Benches and Kilns between tiers by hand, for a level-up.
+    if (base.level_up && !base.rotate_tiers && (owns('Woodworking Bench') || owns('Chimney Kiln'))) {
+        candidates.push({ kind: 'Recipes', label: 'Switch Woodworking Bench and Chimney Kiln recipes by hand', input: { ...base, rotate_tiers: true } });
+    }
     // Recipes the player skipped: they may have a reason, but they should know what it costs.
     for (const name of [...skipped].sort((a, b) => prettyItem(a).localeCompare(prettyItem(b)))) {
         if (!base.exclude.includes(name)) continue;
@@ -1479,7 +1533,14 @@ function homelandPieces(plan, input) {
 
     // Everything else the plan runs, one unit at a time (environment crops no map took count here
     // too); idle units and what the plan doesn't use at all aren't laid out.
-    steps.filter(step => step.status === 'producing').forEach(step => {
+    // Units shared between tiers once each, worth the trips of the time they give each tier.
+    sharedUnits(steps).forEach(unit => {
+        const footprint = FACILITY_FOOTPRINTS[unit.facility];
+        if (!footprint) return;
+        const jobs = unit.jobs.map(({ step, share }) => ({ item: step.item_name, cycle: step.cycle_time, rate: share / step.cycle_time }));
+        pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: jobs.reduce((sum, j) => sum + j.rate * 3600, 0), jobs, cycle: jobs[0].cycle, facility: unit.facility, crop: jobs[0].item, sensitive: false, is_emode: unit.is_emode }] });
+    });
+    steps.filter(step => step.status === 'producing' && !sharesUnits(step)).forEach(step => {
         let n = step.facility_count;
         if (step.environment && step.status === 'producing') {
             const key = `${step.facility}|${step.item_name}`;
@@ -1508,10 +1569,9 @@ function homelandPieces(plan, input) {
         // About as many poles as the units' ground needs past what the generator's range holds
         // (a unit only has to touch it, so some reach past), and one to spare; the layout takes
         // back any it didn't need (see `placePower`).
-        const ground = electric.reduce((sum, step) => {
-            const [w, h] = FACILITY_FOOTPRINTS[step.facility] || [2, 2];
-            return sum + w * h * step.facility_count;
-        }, 0);
+        const footprintArea = facility => (FACILITY_FOOTPRINTS[facility] || [2, 2]).reduce((a, b) => a * b, 1);
+        const ground = electric.filter(step => !sharesUnits(step)).reduce((sum, step) => sum + footprintArea(step.facility) * step.facility_count, 0)
+            + sharedUnits(electric).reduce((sum, unit) => sum + footprintArea(unit.facility), 0);
         const poles = Math.min(POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0, Math.max(0, Math.ceil((ground - 120) / 35) + 1));
         for (let p = 0; p < poles; p++) {
             pieces.push({ members: [{ x: 0, y: 0, w: 1.5, h: 1.5, weight: 0, facility: 'Crackle Power Pole', powerPole: true, sensitive: false }] });
@@ -2375,6 +2435,14 @@ function renderSeason() {
         </label>`).join('');
 }
 
+function attachRotationHandlers() {
+    const toggle = document.getElementById('rotate-tiers');
+    const field = document.getElementById('rotate-hours-field');
+    const sync = () => { field.hidden = !toggle.checked; };
+    toggle.addEventListener('change', sync);
+    sync();
+}
+
 function attachSeasonHandlers() {
     document.getElementById('season-on').addEventListener('change', renderStrategy);
     document.getElementById('season-notes').addEventListener('change', (e) => {
@@ -2427,7 +2495,7 @@ document.addEventListener('aniimax-language-change', () => {
 async function loadRecipeIndex() {
     try {
         recipeIndex = JSON.parse(await callWorker('get_all_items'))
-            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0 }))
+            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none' }))
             .sort((a, b) => a.facility.localeCompare(b.facility) || a.name.localeCompare(b.name));
         renderRecipeOptions();
         renderSkippedRecipes();
@@ -3053,6 +3121,7 @@ function getPlanInputValues(activeProducingCounts = null) {
             emode_facility_counts: activeEmodeFacilityCounts(activeProducingCounts),
             power_grid_rate: getPowerGridRate(),
             power_grid: activePowerGrid(),
+            rotate_tiers: rotatesTiers(),
             facilities,
             modules
         };
@@ -3085,6 +3154,7 @@ function getPlanInputValues(activeProducingCounts = null) {
         emode_facilities: activeEmodeFacilities(),
         emode_facility_counts: activeEmodeFacilityCounts(),
         power_grid_rate: getPowerGridRate(),
+        rotate_tiers: rotatesTiers(),
         facilities,
         modules
     };
@@ -4087,12 +4157,43 @@ function planPowerLayout(units, maxPoles) {
 // The electric units `rows` (a plan's producing E-mode rows) take, one per physical unit, each
 // labelled with what it makes.
 function powerUnits(rows) {
-    const units = rows.flatMap(row => {
+    const units = rows.filter(row => !sharesUnits(row)).flatMap(row => {
         const [w, h] = FACILITY_FOOTPRINTS[row.facility] || [2, 2];
         const item = prettyItem(row.item_name);
         return Array.from({ length: row.facility_count }, () => ({ facility: row.facility, w, h, items: [item], label: item }));
-    });
+    }).concat(sharedUnits(rows).map(unit => {
+        const [w, h] = FACILITY_FOOTPRINTS[unit.facility] || [2, 2];
+        const items = unit.jobs.map(({ step }) => prettyItem(step.item_name));
+        return { facility: unit.facility, w, h, items, label: items.join(' / ') };
+    }));
     return units.sort((a, b) => b.w * b.h - a.w * a.h || a.facility.localeCompare(b.facility));
+}
+
+// When the player switches Benches and Kilns between tiers: what each unit makes, and how many
+// hours of each round of switching, in order (see `sharedUnits`).
+function rotationSection(rows) {
+    const units = sharedUnits(rows);
+    if (!units.length) return '';
+    const hours = rotationHours();
+    const number = {};
+    const lines = units.map(unit => {
+        number[unit.facility] = (number[unit.facility] || 0) + 1;
+        const how = unit.is_emode ? '⚡ E-mode' : '<span>Aniimo</span>';
+        const jobs = unit.jobs.map(({ step, share }) => `<span>${prettyItem(step.item_name)}</span> <span>${formatHours(share * hours)}</span>`);
+        if (unit.free > 0.02) jobs.push(`<span>idle</span> <span>${formatHours(unit.free * hours)}</span>`);
+        return `<li><span>${unit.facility}</span> #${number[unit.facility]} (${how})${currentLocale() === 'zh-TW' ? '：' : ': '}${jobs.join(' → ')}</li>`;
+    }).join('');
+    return `
+        <div class="facility-category">
+            <h4 class="facility-category-title"><span>Switching recipes</span> · <span>every ${hours} hours</span></h4>
+            <p class="hint small">Each round, run the tiers in this order for these hours, then start again.</p>
+            <ul class="rotation-schedule">${lines}</ul>
+        </div>`;
+}
+
+// Hours to one decimal, e.g. "7.5 h".
+function formatHours(h) {
+    return `${Number(h.toFixed(1))} h`;
 }
 
 function renderPowerDiagram(map) {
@@ -4325,7 +4426,7 @@ function renderFacilityPlan(plan) {
         `;
     }).join('');
 
-    container.innerHTML = environmentSections + powerSections + categorySections;
+    container.innerHTML = environmentSections + powerSections + rotationSection(steps) + categorySections;
 }
 
 // Re-renders "Your Rate" from `lastPlan` at whichever unit is currently selected in the
@@ -4999,6 +5100,7 @@ async function initApp() {
     attachSpecialHandlers();
     renderSpecialRecipes();
     attachSeasonHandlers();
+    attachRotationHandlers();
     attachRosterHandlers();
     attachLayoutHandlers();
     attachPriorityHandlers();

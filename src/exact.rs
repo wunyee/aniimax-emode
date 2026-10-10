@@ -7,7 +7,9 @@
 //!   `t_r` is the recipe's time per batch. A unit makes one thing and is left running, so units
 //!   are never shared between recipes, level-up materials included: a homeland runs in the
 //!   background, so a Woodworking Bench or Chimney Kiln is set to one tier and left on it, and
-//!   one is owned for each tier the next level-up needs.
+//!   one is owned for each tier the next level-up needs. A player who switches them between
+//!   tiers now and then (see [`takes_turns`]) lets those recipes share the units' time.
+//!   
 //! - Every item balances: what's made covers what recipes use plus what's sold. A quick variant
 //!   (e.g. `quick_wheat`) makes the same item as the regular one (`wheat`).
 //! - Each facility's units per recipe add up to at most what's owned, counting only units at a
@@ -223,6 +225,13 @@ pub fn is_level_up_material(recipe: &ProductionItem) -> bool {
     recipe.sell_currency == "none"
 }
 
+/// Whether a recipe shares its facility's time with the facility's other recipes instead of
+/// getting whole units of its own: level-up materials, when the player switches the Woodworking
+/// Benches and Chimney Kilns between tiers (see [`FacilityCounts::rotates`]).
+pub fn takes_turns(recipe: &ProductionItem, facility_counts: &FacilityCounts) -> bool {
+    facility_counts.rotates() && is_level_up_material(recipe)
+}
+
 /// The item a recipe makes: a quick variant makes the regular item, and an uncovered crop (see
 /// [`crate::models::add_uncovered_variants`]) makes the same crop, just slower.
 fn made_item<'a>(name: &'a str, all: &HashMap<&str, &ProductionItem>) -> &'a str {
@@ -393,7 +402,7 @@ fn build_model<'a>(
     for &recipe in &recipes {
         let rate = model.add(-seed_cost(recipe), (0.0, f64::INFINITY), false, VarKind::Rate(recipe));
         let max = facility_counts.get_count(&recipe.facility) as f64;
-        let units = model.add(0.0, (0.0, max), true, VarKind::Units(recipe));
+        let units = model.add(0.0, (0.0, max), !takes_turns(recipe, facility_counts), VarKind::Units(recipe));
         model.constrain(vec![(rate, recipe.production_time), (units, -1.0)], ComparisonOp::Le, 0.0);
         rate_of.push((recipe, rate));
         units_of.push((recipe, units));
@@ -1045,12 +1054,16 @@ fn plan_from(model: &Model, value: f64, upper_bound: f64, proven_optimal: bool, 
     let mut pairs: Vec<ExactPair> = Vec::new();
     let mut pace = None;
     let mut staffing = Vec::new();
-    for (kind, &v) in model.kinds.iter().zip(values) {
+    for (i, (kind, &v)) in model.kinds.iter().zip(values).enumerate() {
         match kind {
             VarKind::Pace => pace = Some(v),
             VarKind::Staff { building, member } if v > 1e-9 => staffing.push((building.clone(), *member, v)),
             VarKind::Rate(recipe) if v > 1e-9 => {
                 recipe_rates.insert(recipe.name.clone(), v);
+            }
+            // A recipe taking turns: the units it runs on at least part of the time.
+            VarKind::Units(recipe) if !model.integer[i] && v > 1e-9 => {
+                units.insert(recipe.name.clone(), ((v - 1e-6).ceil().max(1.0)) as u32);
             }
             VarKind::Units(recipe) if v > 0.5 => {
                 units.insert(recipe.name.clone(), v.round() as u32);
@@ -1144,7 +1157,7 @@ pub fn check_plan(
         if rate * recipe.production_time > units as f64 + TOLERANCE {
             return Err(format!("{name} runs {rate}/s but has {units} units at {}s each", recipe.production_time));
         }
-        let in_use = units as f64;
+        let in_use = if takes_turns(recipe, facility_counts) { rate * recipe.production_time } else { units as f64 };
         units_at.entry(recipe.facility.as_str()).or_default().push((recipe.facility_level, in_use));
         if let Some(environment) = recipe.environment.as_deref() {
             *plots_needing.entry((recipe.facility.as_str(), environment)).or_default() += units;
@@ -1612,7 +1625,12 @@ pub fn to_production_plan(
             .map(|(r, units)| (r, units, exact.recipe_rates.get(&r.name).copied().unwrap_or(0.0)))
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.name.cmp(&b.0.name)));
-        let used: u32 = rows.iter().map(|(_, u, _)| u).sum();
+        // Recipes taking turns share units, so what's in use is their combined time.
+        let turns = |r: &ProductionItem| takes_turns(r, facility_counts);
+        let shared: Vec<&str> = rows.iter().filter(|(r, _, _)| turns(r)).map(|(r, _, _)| r.name.as_str()).collect();
+        let shared_time: f64 = rows.iter().filter(|(r, _, _)| turns(r)).map(|(r, _, rate)| rate * r.production_time).sum();
+        let used: u32 = rows.iter().filter(|(r, _, _)| !turns(r)).map(|(_, u, _)| u).sum::<u32>()
+            + ((shared_time - 1e-6).ceil().max(0.0) as u32);
         let base = facility.strip_suffix(" (Manual)").unwrap_or(facility);
         if facility_counts.power().is_some_and(|p| p.watts.contains_key(base)) {
             if base == facility {
@@ -1643,6 +1661,12 @@ pub fn to_production_plan(
         let used = used.min(owned);
         for (recipe, units, rate) in rows {
             let mut reason = uses_of(recipe);
+            if turns(recipe) {
+                let others: Vec<&str> = shared.iter().copied().filter(|n| *n != recipe.name).collect();
+                if !others.is_empty() {
+                    reason = format!("{reason}; takes turns with {}", others.join(", "));
+                }
+            }
             if recipe.name.ends_with(crate::models::UNCOVERED_SUFFIX) {
                 let base = all.get(crate::models::base_item_name(&recipe.name)).and_then(|i| i.environment.as_deref());
                 let speed = base.and_then(crate::models::uncovered_efficiency).unwrap_or(1.0) * 100.0;
