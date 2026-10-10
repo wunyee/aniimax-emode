@@ -927,6 +927,16 @@ tbody tr:first-child td {
     font: inherit;
 }
 
+.option-inline input {
+    width: 4.5rem;
+    padding: 0.3rem 0.5rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: inherit;
+}
+
 .option-inline[hidden] {
     display: none;
 }

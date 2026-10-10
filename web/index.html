@@ -236,8 +236,13 @@
                                     <span class="switch-track" aria-hidden="true"></span>
                                     <span>Switch recipes by hand</span>
                                 </label>
+                                <label class="option-inline" id="rotate-hours-field" hidden>
+                                    <span>At most every</span>
+                                    <input type="number" id="rotate-hours" min="1" max="24" step="1" value="24" inputmode="numeric">
+                                    <span>hours</span>
+                                </label>
                             </div>
-                            <p class="hint small">Each Bench and Kiln makes one tier unless you switch it; with switching (at most once a day), one can make several tiers in turn, and the plan says what to make and when to switch.</p>
+                            <p class="hint small">Each Bench and Kiln makes one tier unless you switch it; with switching (at most once every so many hours, up to 24), one can make several tiers in turn, and the plan says what to make and when to switch. Switching more often only times the switches more closely: the plan still gets the level-up in soonest first, then switches as few times as it can.</p>
                         </div>
                     </div>
                 </div>

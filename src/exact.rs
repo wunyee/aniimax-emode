@@ -785,11 +785,28 @@ fn build_model<'a>(
         model.tiebreak.push((v, BUILDING_TIE_BREAK * buildings));
     }
     // Of plans otherwise equal, the most work on electricity (see `PowerGrid`): each electric
-    // unit kept busy is an Aniimo saved.
+    // unit kept busy is an Aniimo saved. Not for a level-up material an Aniimo makes faster,
+    // though, when the plan picks the units: there it leans the other way, since a level-up's
+    // pace is worked out as if the units could switch tiers whenever, and slower units cost more
+    // time when they can't. Units set on electricity (`set_electric`) are kept busy.
+    for &(recipe, rate) in &rate_of {
+        if facility_counts.power().is_none() && facility_counts.is_electric(&recipe.facility) {
+            let reward = ELECTRIC_TIE_BREAK * recipe.production_time;
+            model.objective[rate] += reward;
+            model.tiebreak.push((rate, -reward));
+        }
+    }
     if let Some(power) = facility_counts.power() {
+        let manual_time: HashMap<&str, f64> = rate_of
+            .iter()
+            .filter(|(recipe, _)| recipe.facility.ends_with(" (Manual)"))
+            .map(|(recipe, _)| (crate::models::base_item_name(&recipe.name), recipe.production_time))
+            .collect();
         for &(recipe, rate) in &rate_of {
             if power.watts.contains_key(&recipe.facility) {
-                let reward = ELECTRIC_TIE_BREAK * recipe.production_time;
+                let slower = is_level_up_material(recipe)
+                    && manual_time.get(crate::models::base_item_name(&recipe.name)).is_some_and(|&t| t < recipe.production_time - 1e-9);
+                let reward = ELECTRIC_TIE_BREAK * recipe.production_time * if slower { -1.0 } else { 1.0 };
                 model.objective[rate] += reward;
                 model.tiebreak.push((rate, -reward));
             }

@@ -1772,6 +1772,10 @@ impl PreparedInput {
         }
         items.extend(manual_items);
 
+        if facility_counts.power().is_none() {
+            let electric: Vec<String> = emode_facilities.iter().filter(|f| facility_counts.get_count(f) > 0).cloned().collect();
+            facility_counts.set_electric(electric);
+        }
         crate::models::apply_emode(&mut items, &emode_facilities, input.power_grid_rate, &requirements);
         let setup = input
             .aniimo

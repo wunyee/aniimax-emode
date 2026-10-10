@@ -1260,6 +1260,9 @@ pub struct FacilityCounts {
     /// Whether the player switches each Woodworking Bench and Chimney Kiln between tiers now and
     /// then, so level-up materials share their units' time instead of each keeping whole units.
     rotate: bool,
+    /// Facilities whose units are set to run on electricity without a generator to pick them
+    /// (see [`FacilityCounts::set_electric`]).
+    electric: std::collections::BTreeSet<String>,
 }
 
 /// A generator's power, for a plan that picks which units of each electric facility run on it
@@ -1282,6 +1285,7 @@ impl Default for FacilityCounts {
             crew: None,
             power: None,
             rotate: false,
+            electric: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -1321,6 +1325,19 @@ impl FacilityCounts {
         self.rotate
     }
 
+    /// Facilities with units set to run on electricity, without a generator for the plan to
+    /// pick them by (see [`FacilityCounts::power`]): of plans otherwise equal, the one keeping
+    /// those units busy wins, rather than leaving them idle for the units worked by hand.
+    pub fn set_electric(&mut self, facilities: impl IntoIterator<Item = String>) -> &mut Self {
+        self.electric = facilities.into_iter().collect();
+        self
+    }
+
+    /// Whether `facility`'s units run on electricity (see [`FacilityCounts::set_electric`]).
+    pub fn is_electric(&self, facility: &str) -> bool {
+        self.electric.contains(facility)
+    }
+
     /// Creates an empty `FacilityCounts` (every facility defaults to count=1, level=1).
     pub fn new() -> Self {
         Self::default()
@@ -1357,6 +1374,7 @@ impl FacilityCounts {
             crew: None,
             power: None,
             rotate: false,
+            electric: std::collections::BTreeSet::new(),
         };
         for (name, count, level) in pairs {
             fc.set(name, *count, *level);
@@ -1373,6 +1391,7 @@ impl FacilityCounts {
             crew: None,
             power: None,
             rotate: false,
+            electric: std::collections::BTreeSet::new(),
         }
     }
 

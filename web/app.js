@@ -350,6 +350,12 @@ function rotatesTiers() {
     return isLevelUpStrategy() && !!document.getElementById('rotate-tiers')?.checked;
 }
 
+// How often, in hours, the player can switch a Bench or Kiln at most: 1 to 24, 24 if unset.
+function rotationHours() {
+    const hours = Math.round(Number(document.getElementById('rotate-hours')?.value));
+    return Number.isFinite(hours) && hours >= 1 ? Math.min(24, hours) : 24;
+}
+
 // A row whose recipe shares its units' time with others at the facility: a level-up material,
 // when the player switches the Benches and Kilns between tiers.
 const sharesUnits = step => step.status === 'producing' && !!lastPlanInput?.rotate_tiers
@@ -414,15 +420,16 @@ function planMeasure(plan) {
 
 // After the exact planner has put on electricity every unit that's no slower on it, the watts
 // left go to units the plan works by hand, in `EMODE_PRIORITY` order, each saving an Aniimo even
-// if it runs slower. The electric units per facility, or `null` if nothing more fits.
-function fillGenerator(plan, grid) {
+// if it runs slower, except at the facilities in `skip`. The electric units per facility, or
+// `null` if nothing more fits.
+function fillGenerator(plan, grid, skip = new Set()) {
     const counts = planEmodeCounts(plan);
     const manual = planUnits(plan, false);
     let left = grid.capacity - Object.entries(counts).reduce((sum, [name, n]) => sum + n * (grid.watts[name] || 0), 0);
     let added = false;
     for (const name of EMODE_PRIORITY) {
         const watts = grid.watts[name];
-        if (!(watts > 0)) continue;
+        if (!(watts > 0) || skip.has(name)) continue;
         for (let free = manual[name] || 0; free > 0 && left >= watts; free--) {
             counts[name] = (counts[name] || 0) + 1;
             left -= watts;
@@ -766,7 +773,7 @@ function getPersistedFieldIds() {
         'rate-unit', 'season-on', 'layout-sim-on', 'season-currency-per-day',
         'aniimo-best', 'aniimo-minimum', 'aniimo-custom',
         'power-grid-rate', 'emode-simple-on', 'simple-power-grid-rate',
-        'generator-capacity', 'simple-generator-capacity', 'level-up-exp', 'level-up-aniipods', 'rotate-tiers',
+        'generator-capacity', 'simple-generator-capacity', 'level-up-exp', 'level-up-aniipods', 'rotate-tiers', 'rotate-hours',
         ...SEASON.crops.map(crop => `season-min-${crop}`)
     ];
 }
@@ -1222,6 +1229,36 @@ function improvementCandidates(base, setup) {
         }
     }
 
+    // One more Aniimo working a unit by hand, on a section of its own. With the best Aniimo for
+    // every job, there's no shortage of Aniimo, only units left to electricity: one of those at
+    // each facility worked by an Aniimo instead (the plan as it stands, but for that). With the
+    // player's own Aniimo, one more of each ability that matters here.
+    const electric = lastPlan?.success ? planEmodeCounts(lastPlan) : {};
+    if (setup.startsWith('best')) {
+        for (const [name, count] of Object.entries(electric)) {
+            const facility = FACILITIES.find(f => f.name === name);
+            if (!(count > 0) || !facility?.ability || !facility.personality) continue;
+            const counts = { ...electric, [name]: count - 1 };
+            if (!counts[name]) delete counts[name];
+            const level = base.aniimo_levels[facility.ability] ?? defaultLevelFor(facility.ability);
+            candidates.push({
+                kind: 'One more Aniimo',
+                label: `+1 ${facility.ability} Aniimo Lv.${level} at ${name} (1 fewer electric)`,
+                input: { ...base, power_grid: null, emode_facility_counts: counts, emode_facilities: Object.keys(counts) },
+            });
+        }
+    }
+    if (setup.startsWith('roster') && base.roster) {
+        for (const ability of [...abilities].sort()) {
+            const level = Math.min(STARTING_ANIIMO_LEVEL, defaultLevelFor(ability));
+            candidates.push({
+                kind: 'One more Aniimo',
+                label: `+1 ${ability} Aniimo Lv.${level}`,
+                input: { ...base, roster: { ...base.roster, members: [...base.roster.members, { count: 1, abilities: { [ability]: level }, personalities: [] }] } },
+            });
+        }
+    }
+
     // Advanced mode: a module at a higher level, one more facility, or one facility at a higher
     // level, within what the RV level covering the rest allows.
     if (planContext && !planContext.simple) {
@@ -1422,9 +1459,13 @@ function renderImprovements() {
     // The status line opens what was checked. The card is rebuilt as each result comes in; keep
     // the list open if the player opened it.
     const open = !!document.querySelector('#improve-list .improve-checked')?.open;
-    document.getElementById('improve-list').innerHTML = improvementsChecked(best, status, open) + (rows.length
-        ? `<ol class="improve-list">${rows.map(r => `<li><span class="improve-name">${r.candidate.label}</span><span class="improve-gain">${r.gain.text}</span></li>`).join('')}</ol>`
-        : '');
+    // One more Aniimo is a section of its own: it's more work to keep, not something to unlock.
+    const list = items => `<ol class="improve-list">${items.map(r => `<li><span class="improve-name">${r.candidate.label}</span><span class="improve-gain">${r.gain.text}</span></li>`).join('')}</ol>`;
+    const more = rows.filter(r => r.candidate.kind === 'One more Aniimo');
+    const rest = rows.filter(r => r.candidate.kind !== 'One more Aniimo');
+    document.getElementById('improve-list').innerHTML = improvementsChecked(best, status, open)
+        + (rest.length ? list(rest) : '')
+        + (more.length ? `<p class="assume-title"><span>One more Aniimo</span></p>${list(more)}` : '');
 }
 
 // Everything the ranking tries, by kind, each with how it came out: the gain, "no gain", or
@@ -2431,6 +2472,17 @@ function renderSeason() {
         </label>`).join('');
 }
 
+function attachRotationHandlers() {
+    const toggle = document.getElementById('rotate-tiers');
+    const field = document.getElementById('rotate-hours-field');
+    const hours = document.getElementById('rotate-hours');
+    const sync = () => { field.hidden = !toggle.checked; };
+    toggle.addEventListener('change', sync);
+    // Out-of-range entries snap back into 1 to 24.
+    hours.addEventListener('change', () => { hours.value = rotationHours(); });
+    sync();
+}
+
 function attachSeasonHandlers() {
     document.getElementById('season-on').addEventListener('change', renderStrategy);
     document.getElementById('season-notes').addEventListener('change', (e) => {
@@ -2851,6 +2903,8 @@ function populateLevelUpTargets() {
 
 function renderStrategy() {
     renderSeason();
+    const rotateField = document.getElementById('rotate-hours-field');
+    if (rotateField) rotateField.hidden = !document.getElementById('rotate-tiers').checked;
     const levelUp = isLevelUpStrategy();
     document.getElementById('level-up-config').style.display = levelUp ? 'block' : 'none';
     document.getElementById('priorities-config').style.display = levelUp ? 'none' : 'block';
@@ -3110,6 +3164,7 @@ function getPlanInputValues(activeProducingCounts = null) {
             power_grid_rate: getPowerGridRate(),
             power_grid: activePowerGrid(),
             rotate_tiers: rotatesTiers(),
+            rotate_hours: rotationHours(),
             facilities,
             modules
         };
@@ -3143,6 +3198,7 @@ function getPlanInputValues(activeProducingCounts = null) {
         emode_facility_counts: activeEmodeFacilityCounts(),
         power_grid_rate: getPowerGridRate(),
         rotate_tiers: rotatesTiers(),
+        rotate_hours: rotationHours(),
         facilities,
         modules
     };
@@ -4157,19 +4213,25 @@ function powerUnits(rows) {
     return units.sort((a, b) => b.w * b.h - a.w * a.h || a.facility.localeCompare(b.facility));
 }
 
-// When the player switches Benches and Kilns between tiers, at most once a day: a day-by-day plan
-// for every unit of each, worked out from what the level-up needs and how long each tier takes
-// on each unit (see `dailySchedule`). Units that never switch are listed as always making one
-// tier; the rest day by day.
+// When the player switches Benches and Kilns between tiers, at most once every so many hours (see
+// `rotationHours`): a plan period by period for every unit of each, worked out from what the
+// level-up needs and how long each tier takes on each unit (see `dailySchedule`). Units that
+// never switch are listed as always making one tier; the rest stretch by stretch.
 function rotationSection(rows, plan) {
     if (!lastPlanInput?.rotate_tiers || !plan.level_up) return '';
     const colon = currentLocale() === 'zh-TW' ? '：' : ': ';
+    const every = lastPlanInput.rotate_hours || 24;
+    // A time counted from when production starts (the clock time it falls on isn't known).
+    const at = hours => `<span>${Math.floor(hours / 24)}d ${Math.round(hours % 24)}h</span>`;
+    const span = (from, to) => (every === 24
+        ? (to - from <= 24 ? `<span>Day ${from / 24 + 1}</span>` : `<span>Days ${from / 24 + 1}–${to / 24}</span>`)
+        : `${at(from)}–${at(to)}`);
     const lines = [];
-    let finished = 0;
+    let hours = 0;
     for (const facility of ['Woodworking Bench', 'Chimney Kiln']) {
         const schedule = dailySchedule(facility, plan);
         if (!schedule) continue;
-        finished = Math.max(finished, schedule.finished || 0);
+        hours = Math.max(hours, schedule.hours || 0);
         const switching = [];
         const fixed = new Map();
         schedule.units.forEach((unit, k) => {
@@ -4180,26 +4242,26 @@ function rotationSection(rows, plan) {
                 fixed.get(key).numbers.push(k + 1);
                 return;
             }
-            // Days on the same tier run together.
+            // Periods on the same tier run together.
             const stretches = [];
             unit.days.filter(d => !d.after).forEach(d => {
                 const last = stretches[stretches.length - 1];
                 if (last && last.item === d.item) {
-                    last.to = d.day;
+                    last.to = d.to;
                     last.made += d.made;
                 } else {
-                    stretches.push({ from: d.day, to: d.day, item: d.item, made: d.made, stock: d.stock });
+                    stretches.push({ from: d.from, to: d.to, item: d.item, made: d.made, stock: d.stock });
                 }
             });
             const steps = stretches.map((d, i) => {
-                const when = d.from === d.to ? `<span>Day ${d.from}</span>` : `<span>Days ${d.from}–${d.to}</span>`;
+                const when = span(d.from, d.to);
                 // When to switch: as much of the new tier's input as is in stock by then.
                 const input = d.item && schedule.inputOf[d.item];
                 const inStock = Math.round(d.stock[input] || 0);
                 const trigger = !(i > 0 && input) ? ''
                     : inStock > 0
                         ? ` <span class="rotation-trigger"><span>switch when</span> <span>${prettyItem(input)}</span> <span>is at about ${formatNumber(inStock)}</span></span>`
-                        : ` <span class="rotation-trigger"><span>switch the same day as the tier below</span></span>`;
+                        : ` <span class="rotation-trigger"><span>switch at the same time as the tier below</span></span>`;
                 if (!d.item) return `<li>${when}${colon}<span>Idle while the tier below builds up</span>${trigger}</li>`;
                 return `<li>${when}${colon}<span>${prettyItem(d.item)}</span> <span>(about ${formatNumber(Math.round(d.made))} made)</span>${trigger}</li>`;
             }).join('');
@@ -4212,36 +4274,54 @@ function rotationSection(rows, plan) {
         lines.push(...switching);
     }
     if (!lines.length) return '';
+    const done = every === 24
+        ? `<span>Done on day ${Math.ceil(hours / 24)}</span>`
+        : `<span>Done about</span> ${at(Math.ceil(hours))} <span>after production starts</span>`;
     return `
         <div class="facility-category">
             <h4 class="facility-category-title"><span>Switching recipes</span></h4>
-            <p class="hint small">Done as soon as switching at most once a day allows, with the fewest switches. Switch on the day listed, once what the unit made before is at about the count shown; the counts are a rough guide. The level-up time above assumes switching as often as it takes.</p>
+            <p class="hint small"><span>Done as soon as switching at most every ${every} hours allows, with the fewest switches.</span> <span>Days and times count from when production starts.</span> <span>Switch at the time listed, once the new recipe's ingredient is at about the count shown; the counts are a rough guide. The level-up time above assumes switching as often as it takes.</span></p>
             <ul class="rotation-schedule">${lines.join('')}</ul>
-            ${finished ? `<p class="hint small"><span>Done on day ${finished}</span></p>` : ''}
+            ${hours ? `<p class="hint small">${done}</p>` : ''}
         </div>`;
 }
 
-// Day by day, what each of `facility`'s units makes, switching at most once a day, so the
-// level-up's tier from it is in soonest. From the plan: how many units run on electricity (the
-// rest are worked by an Aniimo), each tier's time a batch either way (`level_up_times`), the
-// Wood Blocks or Mineral Sand the homeland makes, and what the level-up needs less what's in
-// stock. Each day, every way of setting the units (how many of each kind on each tier) is
-// played out to the end by a simple rule (each unit on the highest tier there's a few hours'
-// input for, else the lowest), and the one finishing soonest is kept; each unit then keeps its
-// tier from the day before where it can. Returns `{ units: [{ electric, days: [{ day, item,
-// made, after }] }], finished }` (`item` null on a day it waits for the tier below; `after` once
-// the level-up's tier is in), or null if there's nothing to plan.
-function dailySchedule(facility, plan) {
+// Period by period (`every` hours each, see `rotationHours`), what each of `facility`'s units
+// makes, switched at most once a period: the level-up's tier from it in soonest, then with the
+// fewest switches. From the plan: how many units run on electricity (the rest are worked by an
+// Aniimo), each tier's time a batch either way (`level_up_times`), the Wood Blocks or Mineral
+// Sand the homeland makes, and what the level-up needs less what's in stock. Returns `{ units:
+// [{ electric, days: [{ from, to, item, made, stock, after }] }], finished, hours, every,
+// inputOf }` (`from`/`to` in hours from the start; `item` null while a unit waits for the tier
+// below; `after` once the level-up's tier is in; `finished` the day it's in), or null if there's
+// nothing to plan.
+function dailySchedule(facility, plan, input = lastPlanInput) {
+    const every = input?.rotate_hours || 24;
     if (!scheduleCache.has(plan)) scheduleCache.set(plan, new Map());
     const cached = scheduleCache.get(plan);
-    if (!cached.has(facility)) cached.set(facility, workOutDailySchedule(facility, plan));
-    return cached.get(facility);
+    const key = `${facility}|${every}`;
+    if (!cached.has(key)) cached.set(key, workOutDailySchedule(facility, plan, input, every));
+    return cached.get(key);
 }
 
 // Each plan's schedules, worked out once however often the plan is drawn again.
 const scheduleCache = new WeakMap();
 
-function workOutDailySchedule(facility, plan) {
+// When the level-up's Bench and Kiln tiers are in by the schedules (see `dailySchedule`), in
+// whole switching periods: `{ all, by: { facility: periods } }`, or null if the plan doesn't
+// switch them.
+function scheduleFinish(plan, input) {
+    if (!input?.rotate_tiers || !plan.level_up) return null;
+    const by = {};
+    for (const facility of ['Woodworking Bench', 'Chimney Kiln']) {
+        const schedule = dailySchedule(facility, plan, input);
+        if (schedule) by[facility] = Math.ceil(schedule.hours / schedule.every - 1e-9);
+    }
+    const all = Math.max(0, ...Object.values(by));
+    return Object.keys(by).length ? { all, by } : null;
+}
+
+function workOutDailySchedule(facility, plan, input, every) {
     const chain = LEVEL_UP_CHAINS.find(c => (plan.coin_items || []).some(s => s.facility === facility && c.includes(s.item_name)));
     if (!chain) return null;
     const cost = (plan.level_up.requirements || []).find(r => chain.includes(r.name));
@@ -4249,7 +4329,7 @@ function workOutDailySchedule(facility, plan) {
     const target = Math.max(0, cost.need - cost.have);
     const tiers = chain.slice(1, chain.indexOf(cost.name) + 1);
     if (!target || !tiers.length) return null;
-    const owned = tierCount(lastPlanInput.facilities[facility]);
+    const owned = tierCount(input.facilities[facility]);
     const electricCount = Math.min(owned, planEmodeCounts(plan)[facility] || 0);
     const timeOf = (item, electric) => (plan.level_up_times || []).find(([name, e]) => name === item && e === electric)?.[2]
         ?? (plan.level_up_times || []).find(([name]) => name === item)?.[2];
@@ -4258,208 +4338,169 @@ function workOutDailySchedule(facility, plan) {
         { electric: false, count: owned - electricCount },
     ].filter(kind => kind.count > 0);
     const perHour = kinds.map(kind => tiers.map(item => 3600 / (timeOf(item, kind.electric) || Infinity)));
-    const amountOf = item => recipeIndex.find(r => r.name === item)?.amounts?.[0] || 1;
+    const amounts = tiers.map(item => recipeIndex.find(r => r.name === item)?.amounts?.[0] || 1);
     const raw = chain[0];
     const rawPerHour = (plan.byproduct_rates || [])
         .filter(([resource]) => byproductItemOf(resource) === raw)
         .reduce((sum, [, rate]) => sum + rate * 3600, 0);
-    const startStock = Object.fromEntries((lastPlanInput.level_up?.stock || []).filter(([name]) => chain.includes(name)));
+    const T = tiers.length;
+    const top = T - 1;
+    // Stock as `[raw, tier 0, tier 1, …]`: tier t is made from `stock[t]` into `stock[t + 1]`.
+    const have = Object.fromEntries((input.level_up?.stock || []).filter(([name]) => chain.includes(name)));
+    const start = [raw, ...tiers].map(item => have[item] || 0);
+    const stockByItem = stock => Object.fromEntries([raw, ...tiers].map((item, i) => [item, stock[i]]));
 
-    // Every way to split `n` units over the tiers.
+    // Every way to split `n` units over the tiers, and every setting ([kind][tier] units).
     const splits = n => {
         const out = [];
         const go = (k, left, acc) => {
-            if (k === tiers.length - 1) { out.push([...acc, left]); return; }
+            if (k === T - 1) { out.push([...acc, left]); return; }
             for (let i = 0; i <= left; i++) go(k + 1, left - i, [...acc, i]);
         };
         go(0, n, []);
         return out;
     };
-    const top = tiers.length - 1;
-    // A day with `setting` ([kind][tier] units): what each tier made, and the hour the
+    const all = kinds.reduce((acc, kind) => acc.flatMap(a => splits(kind.count).map(split => [...a, split])), [[]]);
+    const indexOf = new Map(all.map((setting, i) => [setting.flat().join(','), i]));
+    const switches = (a, b) => a.reduce((sum, row, k) => sum + row.reduce((s, n, t) => s + Math.max(0, n - b[k][t]), 0), 0);
+    const dist = all.map(a => all.map(b => switches(a, b)));
+    // How many units may switch at once: all of them once a day, fewer the more often the player
+    // can switch, since what they don't switch now they can switch a period later.
+    const units = kinds.reduce((sum, kind) => sum + kind.count, 0);
+    const atOnce = Math.max(1, Math.round(units * every / 24));
+    const near = dist.map(row => row.map((d, j) => [d, j]).filter(([d]) => d <= atOnce).map(([, j]) => j));
+    const everything = all.map((_, j) => j);
+
+    // A period on `setting`, hour by hour, changing `stock`: what each tier made, and the hour the
     // level-up's tier was all in, if it was.
-    // Played out hour by hour: coarser steps blur which day a setting finishes on.
-    const STEP_HOURS = 1;
-    const amounts = tiers.map(amountOf);
-    const runDay = (state, setting) => {
-        const made = tiers.map(() => 0);
-        for (let h = 0; h < 24; h += STEP_HOURS) {
-            state.stock[raw] = (state.stock[raw] || 0) + rawPerHour * STEP_HOURS;
-            for (let t = 0; t < tiers.length; t++) {
-                const input = t === 0 ? raw : tiers[t - 1];
+    const runPeriod = (stock, setting) => {
+        const made = new Array(T).fill(0);
+        for (let h = 0; h < every; h++) {
+            stock[0] += rawPerHour;
+            for (let t = 0; t < T; t++) {
                 let can = 0;
                 for (let k = 0; k < kinds.length; k++) can += setting[k][t] * perHour[k][t];
-                let n = Math.min(can * STEP_HOURS, (state.stock[input] || 0) / amounts[t]);
-                if (t === top) n = Math.min(n, target - (state.stock[tiers[t]] || 0));
-                state.stock[input] = (state.stock[input] || 0) - n * amounts[t];
-                state.stock[tiers[t]] = (state.stock[tiers[t]] || 0) + n;
+                let n = Math.min(can, stock[t] / amounts[t]);
+                if (t === top) n = Math.min(n, target - stock[T]);
+                if (!(n > 0)) continue;
+                stock[t] -= n * amounts[t];
+                stock[t + 1] += n;
                 made[t] += n;
             }
-            if ((state.stock[tiers[top]] || 0) >= target - 0.5) return { made, finished: h + STEP_HOURS };
+            if (stock[T] >= target - 0.5) return { made, finished: h + 1 };
         }
         return { made, finished: null };
     };
     const LAST_DAY = 60;
-    const switches = (a, b) => a.reduce((sum, row, k) => sum + row.reduce((s, n, t) => s + Math.max(0, n - b[k][t]), 0), 0);
-    // A plan with `fixed[k]` units of each kind kept on the lowest tier for good, the rest free to
-    // switch once a day: each day, every way of setting the free units is played out to the end
-    // by a simple rule (each free unit, on the highest tier there's a few hours' input for, else
-    // the lowest), and the soonest by the day it's in is kept, then the fewest switches, then the
-    // hours. Returns `{ daily: [{ setting, made }], finished, hours, moves }`.
-    // The simple rule for `free[k]` units of each kind: each, on the highest tier there's a few
-    // hours' input for (counting what the units set before it take), else the lowest.
-    const ruleFor = free => state => {
-        const left = { ...state.stock };
-        return kinds.map((kind, k) => {
-            const split = tiers.map(() => 0);
-            for (let u = 0; u < free[k]; u++) {
-                let pick = 0;
-                for (let t = top; t > 0; t--) {
-                    const use = perHour[k][t] * 4 * amounts[t];
-                    if ((left[tiers[t - 1]] || 0) >= use) {
-                        pick = t;
-                        left[tiers[t - 1]] -= use;
-                        break;
-                    }
-                }
-                split[pick]++;
-            }
-            return split;
-        });
-    };
-    // The hour the level-up's tier is in from `state` (`{ stock, day }`), with `first` set that
-    // day and `next(state)` each day after; Infinity if not by day `last`.
-    const playOut = (state, first, next, last = LAST_DAY) => {
-        const s = { stock: { ...state.stock } };
-        let setting = first;
-        for (let day = state.day; day <= last; day++) {
-            const { finished } = runDay(s, setting);
-            if (finished !== null) return (day - 1) * 24 + finished;
-            setting = next(s);
-        }
-        return Infinity;
-    };
-    const planWith = (fixed, limit) => {
-        const free = kinds.map((kind, k) => kind.count - fixed[k]);
-        const whole = freeSetting => freeSetting.map((row, k) => row.map((n, t) => n + (t === 0 ? fixed[k] : 0)));
-        const freeOptions = kinds.reduce((acc, kind, k) => acc.flatMap(a => splits(free[k]).map(split => [...a, split])), [[]]);
-        const rule = ruleFor(free);
-        const state = { stock: { ...startStock }, day: 1 };
-        const daily = [];
-        let finished = null;
-        let hours = Infinity;
-        let moves = 0;
-        // Before the first day, every unit on the lowest tier.
-        let yesterday = kinds.map((kind, k) => tiers.map((_, t) => (t === 0 ? free[k] : 0)));
-        for (; state.day <= limit && finished === null; state.day++) {
-            let best = null;
-            for (const setting of freeOptions) {
-                const finish = playOut(state, whole(setting), s => whole(rule(s)));
-                const day = Math.ceil(finish / 24);
-                const n = switches(setting, yesterday);
-                if (!best || day < best.day || (day === best.day && (n < best.n || (n === best.n && finish < best.finish - 1e-9)))) {
-                    best = { setting, finish, day, n };
-                }
-            }
-            if (best.finish === Infinity) break;
-            const stock = { ...state.stock };
-            const { made, finished: hour } = runDay(state, whole(best.setting));
-            daily.push({ setting: whole(best.setting), made, stock });
-            moves += best.n;
-            yesterday = best.setting;
-            if (hour !== null) {
-                finished = state.day;
-                hours = (state.day - 1) * 24 + hour;
-            }
-        }
-        return { daily, finished, hours, moves, switching: free.reduce((a, b) => a + b, 0), next: s => whole(rule(s)) };
-    };
-    // Every way to keep some units of each kind on the lowest tier for good: the soonest by the
-    // day it's in, then the fewest units switching, the fewest switches, the fewest hours.
-    let chosen = null;
-    // Most units kept on the lowest tier first: those have few settings to try, and the day they
-    // finish on bounds how far the rest are played out.
-    const fixedOptions = kinds.reduce((acc, kind) => acc.flatMap(a => Array.from({ length: kind.count + 1 }, (_, n) => [...a, n])), [[]])
-        .sort((a, b) => b.reduce((x, y) => x + y, 0) - a.reduce((x, y) => x + y, 0));
-    for (const fixed of fixedOptions) {
-        const result = planWith(fixed, chosen ? chosen.finished : LAST_DAY);
-        if (!result.finished) continue;
-        const better = !chosen || result.finished < chosen.finished
-            || (result.finished === chosen.finished && (result.switching < chosen.switching
-                || (result.switching === chosen.switching && (result.moves < chosen.moves
-                    || (result.moves === chosen.moves && result.hours < chosen.hours)))));
-        if (better) chosen = result;
-    }
-    if (!chosen) return null;
+    const periods = Math.ceil(LAST_DAY * 24 / every);
 
-    // The fewest switches that still have the level-up's tier in by the day `soonest` has it in:
-    // plans built day by day, keeping for each count of switches so far the few with the least
-    // work left (and `soonest` itself, so there's always one that makes it).
-    const fewestSwitches = soonest => {
-        const deadline = soonest.finished;
-        const KEEP = 6;
-        const all = kinds.reduce((acc, kind) => acc.flatMap(a => splits(kind.count).map(split => [...a, split])), [[]]);
-        const lowest = kinds.map(kind => tiers.map((_, t) => (t === 0 ? kind.count : 0)));
-        const same = (a, b) => a.every((row, k) => row.every((n, t) => n === b[k][t]));
-        const speed = tiers.map((_, t) => Math.max(...kinds.map((kind, k) => perHour[k][t])));
-        // Unit hours still to work, from the top tier down, less what's in stock on each.
-        const workLeft = stock => {
-            let need = Math.max(0, target - (stock[tiers[top]] || 0));
-            let work = 0;
-            for (let t = top; t >= 0 && need > 0; t--) {
-                work += need / speed[t];
-                if (t > 0) need = Math.max(0, need * amounts[t] - (stock[tiers[t - 1]] || 0));
-            }
-            return work;
-        };
-        let plans = [{ stock: { ...startStock }, setting: lowest, moves: 0, daily: [], onPath: true }];
-        let found = null;
-        for (let day = 1; day <= deadline && plans.length; day++) {
-            const next = new Map();
-            let path = null;
-            for (const plan of plans) {
-                for (const setting of all) {
-                    const moves = plan.moves + switches(setting, plan.setting);
-                    const onPath = plan.onPath && same(setting, soonest.daily[day - 1].setting);
-                    if (found && moves > found.moves && !onPath) continue;
-                    const s = { stock: { ...plan.stock } };
-                    const { made, finished: hour } = runDay(s, setting);
-                    const daily = [...plan.daily, { setting, made, stock: plan.stock }];
-                    if (hour !== null) {
-                        const hours = (day - 1) * 24 + hour;
-                        if (!found || moves < found.moves || (moves === found.moves && hours < found.hours)) {
-                            found = { daily, finished: day, hours, moves };
+    // A plan that's sure to get there: some units of each kind kept on the lowest tier for good,
+    // the rest each period on the highest tier there's a few hours' input for (counting what the
+    // units set before it take), else the lowest; of every such split, the soonest. Its periods'
+    // settings, or null.
+    const lookAhead = Math.min(every, 4);
+    const ruled = fixed => {
+        const stock = start.slice();
+        const steps = [];
+        for (let p = 0; p < periods; p++) {
+            const left = stock.slice();
+            const setting = kinds.map((kind, k) => {
+                const split = tiers.map((_, t) => (t === 0 ? fixed[k] : 0));
+                for (let u = fixed[k]; u < kind.count; u++) {
+                    let pick = 0;
+                    for (let t = top; t > 0; t--) {
+                        const use = perHour[k][t] * lookAhead * amounts[t];
+                        if (left[t] >= use) {
+                            pick = t;
+                            left[t] -= use;
+                            break;
                         }
-                        continue;
                     }
-                    if (day === deadline) continue;
-                    const child = { stock: s.stock, setting, moves, daily, onPath, work: workLeft(s.stock) };
-                    if (onPath) { path = child; continue; }
-                    const key = `${moves}|${setting.flat().join(',')}`;
-                    const was = next.get(key);
-                    if (!was || child.work < was.work) next.set(key, child);
+                    split[pick]++;
                 }
-            }
-            const byMoves = new Map();
-            for (const child of next.values()) {
-                if (!byMoves.has(child.moves)) byMoves.set(child.moves, []);
-                byMoves.get(child.moves).push(child);
-            }
-            plans = [...byMoves.values()].flatMap(group => group.sort((a, b) => a.work - b.work).slice(0, KEEP));
-            if (path) plans.push(path);
+                return split;
+            });
+            steps.push(indexOf.get(setting.flat().join(',')));
+            const { finished } = runPeriod(stock, setting);
+            if (finished !== null) return { steps, hours: p * every + finished };
         }
-        return found;
+        return null;
     };
-    const { daily, finished } = fewestSwitches(chosen) || chosen;
+    const fixedOptions = kinds.reduce((acc, kind) => acc.flatMap(a => Array.from({ length: kind.count + 1 }, (_, n) => [...a, n])), [[]]);
+    const path = fixedOptions.map(ruled).filter(Boolean).sort((a, b) => a.hours - b.hours)[0];
+    if (!path) return null;
 
-    // Each unit keeps its tier from the day before where it can.
-    const units = kinds.flatMap((kind, k) => Array.from({ length: kind.count }, () => ({ electric: kind.electric, kind: k, days: [], tier: null })));
-    daily.forEach(({ setting, made }, d) => {
+    // Unit hours still to work, from the top tier down, less what's in stock on each.
+    const speed = tiers.map((_, t) => Math.max(...kinds.map((kind, k) => perHour[k][t])));
+    const workLeft = stock => {
+        let need = Math.max(0, target - stock[T]);
+        let work = 0;
+        for (let t = top; t >= 0 && need > 0; t--) {
+            work += need / speed[t];
+            need = Math.max(0, need * amounts[t] - stock[t]);
+        }
+        return work;
+    };
+
+    // Plans built period by period, all together: the first period any of them has the
+    // level-up's tier in is the soonest, and of those that do then, the fewest switches wins
+    // (then the soonest hour). Kept each period: for each count of switches so far the few with
+    // the least work left, the few with the least work left of all, and the sure plan above, so
+    // there's always one that gets there. Setting the units up on the first period isn't a switch.
+    const PER_COUNT = 4;
+    const OVERALL = 6;
+    const lowest = indexOf.get(kinds.map(kind => tiers.map((_, t) => (t === 0 ? kind.count : 0))).flat().join(','));
+    let plans = [{ stock: start, at: lowest, moves: 0, node: null, onPath: true }];
+    let done = null;
+    for (let p = 0; p < periods && !done; p++) {
+        const next = new Map();
+        let pathPlan = null;
+        for (const plan_ of plans) {
+            let options = p === 0 ? everything : near[plan_.at];
+            if (plan_.onPath && !options.includes(path.steps[p])) options = [...options, path.steps[p]];
+            for (const j of options) {
+                const onPath = plan_.onPath && path.steps[p] === j;
+                const moves = plan_.moves + (p === 0 ? 0 : dist[plan_.at][j]);
+                if (done && moves > done.moves) continue;
+                const stock = plan_.stock.slice();
+                const { made, finished } = runPeriod(stock, all[j]);
+                const node = { prev: plan_.node, at: j, made, stock: plan_.stock };
+                if (finished !== null) {
+                    const hours = p * every + finished;
+                    if (!done || moves < done.moves || (moves === done.moves && hours < done.hours)) done = { node, moves, hours };
+                    continue;
+                }
+                const child = { stock, at: j, moves, node, onPath, work: workLeft(stock) };
+                if (onPath) pathPlan = child;
+                const key = moves * all.length + j;
+                const was = next.get(key);
+                if (!was || child.work < was.work) next.set(key, child);
+            }
+        }
+        if (done) break;
+        const children = [...next.values()];
+        const kept = new Set(children.slice().sort((a, b) => a.work - b.work).slice(0, OVERALL));
+        const byMoves = new Map();
+        for (const child of children) {
+            if (!byMoves.has(child.moves)) byMoves.set(child.moves, []);
+            byMoves.get(child.moves).push(child);
+        }
+        for (const group of byMoves.values()) group.sort((a, b) => a.work - b.work).slice(0, PER_COUNT).forEach(c => kept.add(c));
+        if (pathPlan) kept.add(pathPlan);
+        plans = [...kept];
+    }
+    if (!done) return null;
+    const steps = [];
+    for (let node = done.node; node; node = node.prev) steps.unshift(node);
+
+    // Each unit keeps its tier from the period before where it can.
+    const unitList = kinds.flatMap((kind, k) => Array.from({ length: kind.count }, () => ({ electric: kind.electric, kind: k, days: [], tier: null })));
+    steps.forEach(({ at, made, stock }, p) => {
+        const setting = all[at];
         kinds.forEach((kind, k) => {
-            const mine = units.filter(u => u.kind === k);
             const left = [...setting[k]];
             const free = [];
-            mine.forEach(u => {
+            unitList.filter(u => u.kind === k).forEach(u => {
                 if (u.tier !== null && left[u.tier] > 0) left[u.tier]--;
                 else free.push(u);
             });
@@ -4469,19 +4510,19 @@ function workOutDailySchedule(facility, plan) {
                 u.tier = t;
             });
         });
-        // What a tier made that day, shared out by each unit's speed on it.
-        units.forEach(u => {
-            const on = units.filter(v => v.tier === u.tier);
-            const speed = v => perHour[v.kind][v.tier];
-            const share = speed(u) / on.reduce((sum, v) => sum + speed(v), 0);
-            const amount = made[u.tier] * share;
-            u.days.push({ day: d + 1, item: amount > 0.5 ? tiers[u.tier] : null, made: amount, stock: daily[d].stock });
+        // What a tier made that period, shared out by each unit's speed on it.
+        const byItem = stockByItem(stock);
+        unitList.forEach(u => {
+            const on = unitList.filter(v => v.tier === u.tier);
+            const rate = v => perHour[v.kind][v.tier];
+            const amount = made[u.tier] * rate(u) / on.reduce((sum, v) => sum + rate(v), 0);
+            u.days.push({ from: p * every, to: (p + 1) * every, item: amount > 0.5 ? tiers[u.tier] : null, made: amount, stock: byItem });
         });
     });
-    // Past the day the level-up's tier is in, nothing more is needed.
-    if (finished) units.forEach(u => u.days.forEach(day => { day.after = day.day > finished; }));
+    // Past the level-up's tier being in, nothing more is needed.
+    unitList.forEach(u => u.days.forEach(d => { d.after = d.from >= done.hours; }));
     const inputOf = Object.fromEntries(tiers.map((item, t) => [item, t === 0 ? raw : tiers[t - 1]]));
-    return { units, finished, inputOf };
+    return { units: unitList, finished: Math.ceil(done.hours / 24), hours: done.hours, every, inputOf };
 }
 
 // The item a byproduct is ("Wood Blocks" is `wood_block`).
@@ -5003,8 +5044,14 @@ async function runFindPlan() {
         // rounds at most.
         const pickedPower = !!input.power_grid;
         const grid = input.power_grid;
-        for (let round = 0; pickedPower && round < 3 && bestPlan.success; round++) {
-            const filled = fillGenerator(bestPlan, grid);
+        // With the Benches and Kilns switched by hand, the level-up time assumes switching
+        // whenever; when they're really in is up to the switching schedule (see `scheduleFinish`).
+        let finish = pickedPower && bestPlan.success ? scheduleFinish(bestPlan, input) : null;
+        // Benches or Kilns whose slower electric units would get the level-up in later are left
+        // to Aniimo.
+        let skip = new Set();
+        for (let round = 0; pickedPower && round < 4 && bestPlan.success; round++) {
+            const filled = fillGenerator(bestPlan, grid, skip);
             if (!filled || JSON.stringify(filled) === JSON.stringify(input.emode_facility_counts)) break;
             const retry = { ...input, power_grid: null, emode_facility_counts: filled, emode_facilities: Object.keys(filled) };
             const retryPlan = JSON.parse(await callWorker('find_plan', JSON.stringify({ ...retry, aniimo: bestSetup })));
@@ -5012,8 +5059,16 @@ async function runFindPlan() {
             // Saving Aniimo mustn't cost the plan its goal: a slower level-up, less of the first
             // priority or fewer coins keeps the plan as it was.
             if (!retryPlan.success || planMeasure(retryPlan) < planMeasure(bestPlan) * (1 - 1e-6) - 1e-12) break;
+            const retryFinish = finish === null ? null : scheduleFinish(retryPlan, { ...input, ...retry });
+            if (retryFinish !== null && retryFinish.all > finish.all) {
+                const later = Object.keys(retryFinish.by).filter(f => retryFinish.by[f] > finish.all && !skip.has(f));
+                if (!later.length) break;
+                later.forEach(f => skip.add(f));
+                continue;
+            }
             Object.assign(input, retry);
             bestPlan = retryPlan;
+            finish = retryFinish;
         }
 
         // Not needed when the exact planner picked the electric units itself (`power_grid`).
@@ -5393,6 +5448,7 @@ async function initApp() {
     attachSpecialHandlers();
     renderSpecialRecipes();
     attachSeasonHandlers();
+    attachRotationHandlers();
     attachRosterHandlers();
     attachLayoutHandlers();
     attachPriorityHandlers();
