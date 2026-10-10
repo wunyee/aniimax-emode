@@ -1273,6 +1273,11 @@ pub struct JsProductionPlan {
     /// building kind a member staffs.
     #[serde(default)]
     pub staffing: Vec<(String, usize, f64)>,
+    /// `[item, on electricity, seconds a batch]` for every level-up material recipe the plan
+    /// could run, on electricity or by hand: what the page needs to plan switching Benches and
+    /// Kilns between tiers day by day.
+    #[serde(default)]
+    pub level_up_times: Vec<(String, bool, f64)>,
 }
 
 /// What a plan makes of one priority.
@@ -1335,6 +1340,7 @@ fn empty_production_plan(success: bool, error: Option<String>) -> JsProductionPl
         priorities: vec![],
         season_points: None,
         staffing: Vec::new(),
+        level_up_times: Vec::new(),
     }
 }
 
@@ -1891,7 +1897,22 @@ impl PreparedInput {
             priorities: vec![],
             season_points,
             staffing: Vec::new(),
+            level_up_times: self.level_up_times(),
         }
+    }
+
+    /// See [`JsProductionPlan::level_up_times`]: a recipe on an electric facility's own units
+    /// runs on electricity, on its "(Manual)" copy (or a facility not on electricity) by hand.
+    fn level_up_times(&self) -> Vec<(String, bool, f64)> {
+        let mut times: Vec<(String, bool, f64)> = Vec::new();
+        for item in self.items.iter().filter(|i| crate::exact::is_level_up_material(i)) {
+            let name = crate::models::base_item_name(&item.name).to_string();
+            let electric = !item.facility.ends_with(" (Manual)") && self.input.emode_facilities.contains(&item.facility);
+            if !times.iter().any(|(n, e, _)| *n == name && *e == electric) {
+                times.push((name, electric, item.production_time));
+            }
+        }
+        times
     }
 }
 
