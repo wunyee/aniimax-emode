@@ -1426,11 +1426,9 @@ function tripsPerUnit(step) {
 const needsEnvironment = item => !!recipeIndex.find(r => r.name === item)?.environment;
 
 // The plan as pieces for `layOut`: environment blocks, then one piece per other facility unit,
-// then whatever the player owns that the plan doesn't use.
+// then the Crackle Generator and its poles. Idle units and what the plan doesn't use aren't laid out.
 function homelandPieces(plan, input) {
     const pieces = [];
-    const placed = {};
-    const count = (facility, n = 1) => { placed[facility] = (placed[facility] || 0) + n; };
     const unplaced = new Set();
     const steps = (plan.coin_items || []).filter(s => s.facility);
     const envSteps = steps.filter(s => s.environment && s.status === 'producing');
@@ -1457,11 +1455,9 @@ function homelandPieces(plan, input) {
     blocks.forEach(({ mode, unit, parts }) => {
         const size = environmentBuildingSize(unit.building);
         const buildings = [{ x: 0, y: 0, w: size, h: size, facility: unit.building, mode: unit.pairModes ? unit.pairModes[0] : mode, building: true }];
-        count(unit.building);
         if (unit.partner) {
             const partnerSize = environmentBuildingSize(unit.partner[0]);
             buildings.push({ x: unit.partner[1], y: unit.partner[2], w: partnerSize, h: partnerSize, facility: unit.partner[0], mode: unit.pairModes ? unit.pairModes[1] : mode, building: true });
-            count(unit.partner[0]);
         }
         const plots = [];
         const planned = [];
@@ -1475,15 +1471,15 @@ function homelandPieces(plan, input) {
                 const crop = (crops[p.facility] || []).shift() || { crop: null, trips: 0 };
                 plots.push({ w: p.size, h: p.size, weight: crop.trips, cycle: crop.cycle, zone: unit.partner ? zone : 0, facility: p.facility, crop: crop.crop });
                 planned.push({ x: p.x, y: p.y });
-                count(p.facility);
                 placedInBlocks[`${p.facility}|${crop.crop}`] = (placedInBlocks[`${p.facility}|${crop.crop}`] || 0) + 1;
             });
         });
         pieces.push({ cluster: true, buildings, plots, planned });
     });
 
-    // Everything else, one unit at a time; environment crops no map took count here too.
-    steps.forEach(step => {
+    // Everything else the plan runs, one unit at a time (environment crops no map took count here
+    // too); idle units and what the plan doesn't use at all aren't laid out.
+    steps.filter(step => step.status === 'producing').forEach(step => {
         let n = step.facility_count;
         if (step.environment && step.status === 'producing') {
             const key = `${step.facility}|${step.item_name}`;
@@ -1502,7 +1498,6 @@ function homelandPieces(plan, input) {
             const growing = step.status === 'producing';
             pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: tripsPerUnit(step), cycle: step.cycle_time, facility: step.facility, crop: growing ? step.item_name : null, sensitive: growing && needsEnvironment(step.item_name), is_emode: growing && !!step.is_emode }] });
         }
-        count(step.facility, n);
     });
 
     // The Crackle Generator, when anything runs on it: placed first, with the units on it around
@@ -1522,22 +1517,6 @@ function homelandPieces(plan, input) {
             pieces.push({ members: [{ x: 0, y: 0, w: 1.5, h: 1.5, weight: 0, facility: 'Crackle Power Pole', powerPole: true, sensitive: false }] });
         }
     }
-
-    // What's owned but not in the plan at all, such as environment buildings it didn't need.
-    FACILITIES.forEach(f => {
-        const owned = tierCount(input.facilities[f.name]);
-        const extra = owned - (placed[f.name] || 0);
-        if (extra <= 0) return;
-        const footprint = f.name in ENVIRONMENT_BUILDING_SIZES
-            ? [environmentBuildingSize(f.name), environmentBuildingSize(f.name)]
-            : FACILITY_FOOTPRINTS[f.name];
-        if (!footprint) {
-            unplaced.add(f.name);
-            return;
-        }
-        const building = f.name in ENVIRONMENT_BUILDING_SIZES;
-        for (let i = 0; i < extra; i++) pieces.push({ members: [{ x: 0, y: 0, w: footprint[0], h: footprint[1], weight: 0, facility: f.name, crop: null, building, mode: null }] });
-    });
 
     return { pieces, unplaced: [...unplaced] };
 }
@@ -3278,6 +3257,8 @@ function renderSeedsNeeded(goalResult) {
 // Fixed display order for environment groups; matches ENVIRONMENT_BUILDINGS's mode order in
 // optimizer.rs (Heat Furnace's two modes, then Cooling Unit's two, then Sunlamp's one).
 const ENVIRONMENT_MODE_ORDER = ['Warm', 'Scorching', 'Cool', 'Freeze', 'Adequate'];
+// Buildings that run one mode only and can't be set to another: shown by name, without a mode.
+const SINGLE_MODE_BUILDINGS = new Set(['Sunlamp']);
 
 // "Fire Lv.4 · Practical" for a row that needs a specific Aniimo, or '-' when it doesn't (crops,
 // trees, idle facilities).
@@ -3904,16 +3885,17 @@ function renderEnvironmentDiagram(layout, mode, building, rows = [], unit = null
                 swatch(tintOf(modes[1]), `${unit.partner[0]}: ${modes[1]}`),
                 swatch(tint, zone === 1 ? `${mode} where both reach` : `${mode}, this plan's plots`),
             ])
-        : [swatch(tint, `${mode} coverage`)];
+        : [swatch(tint, SINGLE_MODE_BUILDINGS.has(building) ? `${building} coverage` : `${mode} coverage`)];
     const legend = coverageLegend.concat(Object.entries(counts).map(([key, n]) => {
         const [facility, crop] = key.split('|');
         // The number a plot carries in the diagram reads as part of the facility's name, as the
         // plots themselves do: "Farmland 1: Sugarcane".
-        const named = `${facility}${numbered ? ` <b>${numberOf(key)}</b>` : ''}`;
-        const name = crop && crop !== 'null' ? `${named}: ${prettyItem(crop)}` : named;
+        const named = `<span>${facility}</span>${numbered ? ` <b>${numberOf(key)}</b>` : ''}`;
+        const colon = currentLocale() === 'zh-TW' ? '：' : ': ';
+        const name = crop && crop !== 'null' ? `${named}${colon}<span>${prettyItem(crop)}</span>` : named;
         return `
         <span class="env-legend-item">
-            <span class="env-legend-swatch" style="background:${ENVIRONMENT_FACILITY_COLORS[facility] || '#888888'}"></span>${name} ×${n}
+            <span class="env-legend-swatch" style="background:${ENVIRONMENT_FACILITY_COLORS[facility] || '#888888'}"></span><span class="power-legend-text">${name} ×${n}</span>
         </span>`;
     })).join('');
 
@@ -4273,7 +4255,7 @@ function renderFacilityPlan(plan) {
         }
         return `
             <div class="facility-category">
-                <h4 class="facility-category-title">${units[0].building} ${modeTag(mode)}</h4>
+                <h4 class="facility-category-title">${units[0].building}${SINGLE_MODE_BUILDINGS.has(units[0].building) ? '' : ` ${modeTag(mode)}`}</h4>
                 ${units.map((unit, i) => `
                     ${units.length > 1 ? `<p class="hint small">${unit.building} ${i + 1}</p>` : ''}
                     <div class="env-unit">
