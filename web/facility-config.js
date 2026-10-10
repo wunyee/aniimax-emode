@@ -66,7 +66,7 @@ export const FACILITIES = [
         name: 'Starfall Hammock', slug: 'starfall-hammock', defaultCount: 0, category: 'Aniimo Materials', hasLevels: false, hasWorker: true, ability: 'Leisure', personality: 'Faithful',
         unlocks: { 1: 12 },
         counts: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-        tooltip: "Star (needs Cool)&#10;Not yet verified in game."
+        tooltip: "Star (needs Cool)"
     },
     {
         name: 'Floral Windmill', slug: 'floral-windmill', defaultCount: 0, category: 'Aniimo Materials', hasLevels: false, hasWorker: true, ability: 'Leisure', personality: 'Nimble',
