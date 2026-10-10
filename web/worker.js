@@ -122,8 +122,19 @@ async function exactPlanJson(pkg, payload, step = () => {}, first = () => {}) {
         const alone = stage.floors.length === 0 && !stage.pace;
         const priority = JSON.parse(exact_priority_problem(payload, JSON.stringify(stage), target));
         if (!priority.lp) throw new Error('this setup isn\'t covered by the exact planner');
-        const most = await solveModel(priority);
+        let most = await solveModel(priority);
+        // Kept to a level-up's pace, the solver can now and then find nothing right at the edge
+        // of it: once more with a hair more slack, and failing that, this priority is left out
+        // rather than the whole exact plan.
+        if (!most && stage.pace) {
+            const looser = { ...stage, pace: stage.pace * (1 - 1e-3) };
+            most = await solveModel(JSON.parse(exact_priority_problem(payload, JSON.stringify(looser), target)));
+        }
         step(`priority:${target}`, 'done', most?.proven);
+        if (!most && stage.pace) {
+            console.warn(`No plan found for the most ${target} at the level-up's pace; leaving it out.`);
+            continue;
+        }
         if (!most) throw new Error(`no plan found for the most ${target}`);
         if (alone) first({ measure: target, objective: most.objective, proven: most.proven });
         allProven &&= most.proven;

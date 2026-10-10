@@ -881,9 +881,54 @@ tbody tr:first-child td {
     line-height: 1.7;
 }
 
-.rotate-tiers-row {
-    align-items: center;
+/* A group of related options under the strategy, set apart in its own box with a title. */
+.option-panel {
     margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+
+.option-title {
+    margin: 0 0 0.6rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.option-switches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1.5rem;
+}
+
+.option-panel .hint {
+    margin: 0.6rem 0 0;
+}
+
+/* A small labelled picker on the same line as a switch, e.g. "Every [12 hours]". */
+.option-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.option-inline select {
+    width: auto;
+    padding: 0.3rem 0.5rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font: inherit;
+}
+
+.option-inline[hidden] {
+    display: none;
 }
 
 /* A legend line wraps as one block beside its swatch. */
@@ -2452,9 +2497,14 @@ tr:hover .skip-row,
     vertical-align: super;
 }
 
-/* Harvest Moon Festival: a switch, then the season's inputs while it's on. */
+/* Harvest Moon Festival: a switch, then the season's inputs while it's on, in a box of its own
+   like the strategy's options. */
 .season {
-    margin: 0 0 1.25rem;
+    margin: 0.75rem 0 1.25rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
 }
 
 .season-switch {

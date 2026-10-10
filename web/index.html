@@ -213,37 +213,42 @@
                             <p class="hint small">Counts toward the level-up. Wood Blocks, Mineral Sand and lower tiers get processed up.</p>
                             <div class="stock-grid" id="level-up-stock-grid"></div>
                         </details>
-                        <p class="assume-title">Also make, without slowing the level-up</p>
-                        <div class="input-row level-up-extras">
-                            <label class="priority-switch">
-                                <input type="checkbox" role="switch" id="level-up-exp">
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>Aniimo EXP</span>
-                            </label>
-                            <label class="priority-switch">
-                                <input type="checkbox" role="switch" id="level-up-aniipods">
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>Aniipods</span>
-                            </label>
-                        </div>
-                        <div class="input-row rotate-tiers-row">
-                            <label class="priority-switch">
-                                <input type="checkbox" role="switch" id="rotate-tiers">
-                                <span class="switch-track" aria-hidden="true"></span>
-                                <span>Switch Woodworking Bench and Chimney Kiln recipes by hand</span>
-                            </label>
-                            <div class="input-field" id="rotate-hours-field" hidden>
-                                <label for="rotate-hours">Every</label>
-                                <select id="rotate-hours">
-                                    <option value="4">4 hours</option>
-                                    <option value="6">6 hours</option>
-                                    <option value="8">8 hours</option>
-                                    <option value="12" selected>12 hours</option>
-                                    <option value="24">24 hours</option>
-                                </select>
+                        <div class="option-panel">
+                            <p class="option-title">Also make, without slowing the level-up</p>
+                            <div class="option-switches level-up-extras">
+                                <label class="priority-switch">
+                                    <input type="checkbox" role="switch" id="level-up-exp">
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span>Aniimo EXP</span>
+                                </label>
+                                <label class="priority-switch">
+                                    <input type="checkbox" role="switch" id="level-up-aniipods">
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span>Aniipods</span>
+                                </label>
                             </div>
                         </div>
-                        <p class="hint small">Each Bench and Kiln makes one tier unless you switch it now and then; with switching, one can share its time between tiers, and the plan shows when to switch each.</p>
+                        <div class="option-panel">
+                            <p class="option-title">Woodworking Bench and Chimney Kiln</p>
+                            <div class="option-switches rotate-tiers-row">
+                                <label class="priority-switch">
+                                    <input type="checkbox" role="switch" id="rotate-tiers">
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span>Switch recipes by hand</span>
+                                </label>
+                                <label class="option-inline" id="rotate-hours-field" hidden>
+                                    <span>Every</span>
+                                    <select id="rotate-hours">
+                                        <option value="4">4 hours</option>
+                                        <option value="6">6 hours</option>
+                                        <option value="8">8 hours</option>
+                                        <option value="12" selected>12 hours</option>
+                                        <option value="24">24 hours</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <p class="hint small">Each Bench and Kiln makes one tier unless you switch it now and then; with switching, one can share its time between tiers, and the plan shows when to switch each.</p>
+                        </div>
                     </div>
                 </div>
 
