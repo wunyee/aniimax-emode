@@ -1,4 +1,6 @@
-# Aniimax
+# Aniimax (E-mode edition)
+
+> This is the E-mode edition by [wunyee](https://github.com/wunyee), based on [aniimax](https://github.com/ae-bii/aniimax) by ae-bii and its contributors. It adds a planner that picks which units run on the Crackle Generator, Woodworking Benches and Chimney Kilns kept on one recipe each, Aniimo EXP and Aniipods alongside a level-up, season crop minimums, and Traditional Chinese for the new text. **[Launch the E-mode edition](https://wunyee.github.io/aniimax-emode/)**
 
 A command-line tool, Rust library, and **web application** for optimizing production paths in Aniimo Homeland. Calculate the fastest way to produce your target amount of Homeland currency, and see what every facility you own should be doing at once.
 
