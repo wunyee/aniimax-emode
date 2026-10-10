@@ -1679,7 +1679,11 @@ pub fn to_production_plan(
         for (recipe, units, rate) in rows {
             let mut reason = uses_of(recipe);
             if turns(recipe) {
-                let others: Vec<&str> = shared.iter().copied().filter(|n| *n != recipe.name).collect();
+                // By item: an Aniimo's and electricity's copies of a recipe are one tier.
+                let mine = crate::models::base_item_name(&recipe.name);
+                let mut others: Vec<&str> = shared.iter().map(|n| crate::models::base_item_name(n)).filter(|n| *n != mine).collect();
+                others.sort_unstable();
+                others.dedup();
                 if !others.is_empty() {
                     reason = format!("{reason}; takes turns with {}", others.join(", "));
                 }
