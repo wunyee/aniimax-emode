@@ -3612,6 +3612,10 @@ function aniimoNeeds(g) {
 // every Aniimo Materials facility. It may step away for a little of its day (see aniimo-team.js).
 const TEAM_RESIDENTS = new Set(['Mine', 'Well', ...RESIDENT_FACILITIES]);
 
+// Facilities whose Aniimo stays with its unit, any with the ability at the level will do, and the
+// time the unit waits on ingredients is free for other work (see aniimo-team.js).
+const TEAM_POSTS = new Set(['Aniipod Maker', 'Dance Pad Polisher']);
+
 // A circle for one ability of a team member, in the same style as the counts above the team.
 function teamDot(ability, text, bonus, tip) {
     const a = ABILITY_BY_NAME.get(ability);
@@ -3712,6 +3716,9 @@ function teamPieces(plan, fixedNeeds) {
                 for (let unit = 0; unit < Math.ceil(task.busy - 1e-6); unit++) {
                     pieces.push({ ...piece, busy: 1, kind: 'resident', feedsLevelUp });
                 }
+            } else if (TEAM_POSTS.has(step.facility)) {
+                // One Aniimo per unit at work: whole days, then what's left on the last.
+                for (let left = task.busy; left > 1e-6; left -= 1) pieces.push({ ...piece, busy: Math.min(1, left), kind: 'post' });
             } else {
                 pieces.push({ ...piece, busy: task.busy, kind: 'work' });
             }

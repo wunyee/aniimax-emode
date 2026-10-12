@@ -7,9 +7,14 @@
 // one after another, as long as its day has room and none of them want opposite personalities.
 //
 // The best team, in order: nothing makes less (no Aniimo leaves its post unless the homeland
-// can't hold the team otherwise); the fewest Aniimo; Farmland and Woodland jobs with the best
-// haulers, since an Aniimo working the fields can carry the harvest to storage between jobs; any
-// other Aniimo with time to spare a good hauler too; then the forms easiest to get.
+// can't hold the team otherwise); the fewest Aniimo; extra work with the least busy Aniimo, so they
+// multitask (Farmland and Woodland jobs included); an Aniimo left with only Farmland and Woodland
+// jobs a good hauler, since it can carry the harvest to storage between them; any other Aniimo with
+// time to spare a good hauler too; then the forms easiest to get.
+//
+// The Aniipod Maker's and Dance Pad Polisher's Aniimo (`kind: 'post'`) stay with their unit, one
+// each, but the time it waits on ingredients is free for other work, at no cost to what it makes:
+// so they take on work like any Aniimo with time to spare, ahead of residents.
 //
 // Some Aniimo never leave their post: the Crackle Generator's (every electric unit stops without
 // it) and each environment building's (`kind: 'fixed'`). A resident facility's Aniimo (the Mine,
@@ -87,19 +92,24 @@ function take(aniimo, piece) {
 const total = pieces => pieces.reduce((sum, piece) => sum + piece.busy, 0);
 
 // `parts` (each less than a day) shared out over the fewest Aniimo, each with a form that can do
-// all its work and no two opposite personalities; of the ways with that few, the one whose Farmland
-// and Woodland jobs go to the best haulers, then the one whose Aniimo with time to spare haul best.
-// Every way is tried, largest piece first, up to `SEARCH_LIMIT` steps. Returns `[{ form, pieces }]`.
-function packFewest(parts, forms) {
+// all its work and no two opposite personalities; of the ways with that few, the one that leaves
+// no Aniimo busier than it need be, then the one whose Aniimo working only Farmland and Woodland
+// jobs haul best, then the one whose Aniimo with time to spare haul best.
+// Every way is tried, largest piece first, up to `SEARCH_LIMIT` steps. `posts` are Aniimo there
+// anyway, each with its own work, that can take more in the time they have left. Returns
+// `[{ form, pieces, post }]`.
+function packFewest(parts, forms, posts = []) {
     const order = [...parts].sort((a, b) => b.busy - a.busy);
     // Which forms can work each piece, as a bit per form.
-    const able = order.map(piece => forms.reduce((mask, form, i) => (canDo(form, piece) ? mask | (1n << BigInt(i)) : mask), 0n));
-    const bins = [];
+    const maskOf = piece => forms.reduce((mask, form, i) => (canDo(form, piece) ? mask | (1n << BigInt(i)) : mask), 0n);
+    const able = order.map(maskOf);
+    const bins = posts.map(piece => ({ mask: maskOf(piece), busy: piece.busy, pieces: [piece], personalities: new Set(piece.personality ? [piece.personality] : []), post: true }));
     let best = null;
     let steps = 0;
 
     // A bin's form and how it scores: the best hauler that can do it all (the easiest to get of
-    // those), its hauling times its Farmland and Woodland work, and its hauling if it has time spare.
+    // those), its hauling times its work if that's all Farmland and Woodland jobs, and its hauling
+    // if it has time spare.
     const settle = bin => {
         let form = null;
         for (let i = 0; i < forms.length; i++) {
@@ -107,12 +117,18 @@ function packFewest(parts, forms) {
             const f = forms[i];
             if (!form || hauls(f) > hauls(form) || (hauls(f) === hauls(form) && easiestFirst(f, form) < 0)) form = f;
         }
-        const fields = total(bin.pieces.filter(p => p.jobs));
-        return { form, fields: hauls(form) * fields, spare: bin.busy < 1 - EPSILON ? hauls(form) : 0 };
+        const fields = bin.pieces.every(p => p.jobs) ? hauls(form) * bin.busy : 0;
+        return { form, fields, spare: bin.busy < 1 - EPSILON ? hauls(form) : 0, load: bin.busy * bin.busy };
     };
-    const better = (a, b) => a.count < b.count
-        || (a.count === b.count && (a.fields > b.fields + EPSILON
-            || (Math.abs(a.fields - b.fields) <= EPSILON && a.spare > b.spare + EPSILON)));
+    // Fewer Aniimo; then work spread to the least busy (the sum of each Aniimo's busy squared,
+    // lowest when no one takes on more while another sits idle); then the Aniimo working only the
+    // fields with the best haulers; then the best haulers with time to spare.
+    const better = (a, b) => {
+        if (a.count !== b.count) return a.count < b.count;
+        if (Math.abs(a.load - b.load) > EPSILON) return a.load < b.load;
+        if (Math.abs(a.fields - b.fields) > EPSILON) return a.fields > b.fields;
+        return a.spare > b.spare + EPSILON;
+    };
 
     const search = i => {
         if (++steps > SEARCH_LIMIT && best) return;
@@ -123,7 +139,8 @@ function packFewest(parts, forms) {
                 count: bins.length,
                 fields: settled.reduce((sum, s) => sum + s.fields, 0),
                 spare: settled.reduce((sum, s) => sum + s.spare, 0),
-                team: bins.map((bin, k) => ({ form: settled[k].form, pieces: [...bin.pieces] })),
+                load: settled.reduce((sum, s) => sum + s.load, 0),
+                team: bins.map((bin, k) => ({ form: settled[k].form, pieces: [...bin.pieces], post: !!bin.post })),
             };
             if (!best || better(found, best)) best = found;
             return;
@@ -193,8 +210,9 @@ function dissolve(victim, hosts, forms, room) {
 }
 
 // The team for `pieces`: each `{ ability, level, busy, personality, kind, feedsLevelUp, family,
-// jobs }`, where `kind` is 'fixed' or 'resident' for one unit's whole-day Aniimo, and 'work'
-// otherwise; `jobs` marks Farmland and Woodland work. Any other fields a piece has are kept for the
+// jobs }`, where `kind` is 'fixed' or 'resident' for one unit's whole-day Aniimo, 'post' for one
+// unit's Aniimo that can take on more in the time its unit leaves it, and 'work' otherwise; `jobs`
+// marks Farmland and Woodland work. Any other fields a piece has are kept for the
 // caller. `caps` is the highest level of each ability the player set; `limit`, if known, how many
 // of these Aniimo the homeland has room for. Returns one entry per Aniimo: its `form` (null if no
 // form in the handbook within the caps can do its work), `kind`, `pieces`, `busy`, `leave` and
@@ -218,7 +236,10 @@ export function recommendTeam({ pieces, dex, caps, limit = null, residentLeave =
     // Work no form within the caps can do gets an Aniimo of its own, named by what it asks for.
     const doable = parts.filter(piece => forms.some(form => canDo(form, piece)));
     parts.filter(piece => !doable.includes(piece)).forEach(piece => team.push(newAniimo(null, [piece], 'work')));
-    packFewest(doable, forms).forEach(({ form, pieces: shared }) => team.push(newAniimo(form, shared, 'work')));
+    const posts = pieces.filter(p => p.kind === 'post');
+    const able = posts.filter(piece => forms.some(form => canDo(form, piece)));
+    posts.filter(piece => !able.includes(piece)).forEach(piece => team.push(newAniimo(null, [piece], 'post')));
+    packFewest(doable, forms, able).forEach(({ form, pieces: shared, post }) => team.push(newAniimo(form, shared, post ? 'post' : 'work')));
 
     // Only if the homeland can't hold them all: residents step away for a little of their day,
     // where their facility doesn't feed the level-up, to take over the least busy Aniimo's work.

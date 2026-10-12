@@ -135,8 +135,9 @@ const busyOf = aniimo => aniimo.pieces.reduce((sum, p) => sum + p.busy, 0);
     assert.ok(team.length < pieces.length);
 }
 
-// The fewest Aniimo, and of those, the fields go to the best haulers: sowing and watering to one
-// that has Grass, Water and Hauling (Leafy), not to an Aniimo with no Hauling.
+// The fewest Aniimo; of those, the work spread so no one is busier than need be (each multitasks,
+// Farmland and Woodland jobs included); then an Aniimo left with only those jobs is the best hauler
+// that can do them.
 {
     const fields = (ability, busy, job) => work(ability, 1, busy, { jobs: new Map([[job, new Set(['Farmland'])]]) });
     const pieces = [
@@ -145,8 +146,46 @@ const busyOf = aniimo => aniimo.pieces.reduce((sum, p) => sum + p.busy, 0);
     ];
     const team = recommendTeam({ pieces, dex, caps });
     assert.equal(team.length, 3);
-    const grower = team.find(a => a.pieces.some(p => p.ability === 'Grass'));
-    assert.ok(grower.pieces.some(p => p.ability === 'Water'), 'sowing and watering together');
-    assert.ok((grower.form.abilities.Hauling || 0) >= 3, grower.form.name);
+    // 0.3, 0.23 and 0.2: the Artisanship work alone, the fields' jobs shared by the other two.
+    assert.ok(Math.max(...team.map(busyOf)) <= 0.3 + 1e-9, team.map(busyOf).join());
+    for (const aniimo of team.filter(a => a.pieces.every(p => p.jobs))) {
+        const able = dex.filter(f => withinCaps(f, caps) && aniimo.pieces.every(p => (f.abilities[p.ability] || 0) >= p.level));
+        const best = Math.max(...able.map(f => f.abilities.Hauling || 0));
+        assert.equal(aniimo.form.abilities.Hauling || 0, best, aniimo.form.name);
+    }
     team.forEach(a => assert.equal(a.leave, 0));
+}
+
+// An Aniipod Maker's or Dance Pad Polisher's Aniimo stays with its unit, but the time the unit
+// waits on ingredients takes other work, so no Aniimo is kept just for that.
+{
+    const post = (busy, extra = {}) => ({ ability: 'Lightning', level: 3, busy, personality: null, kind: 'post', ...extra });
+    const team = recommendTeam({ pieces: [post(0.4), work('Lightning', 3, 0.3)], dex, caps });
+    assert.equal(team.length, 1);
+    assert.equal(team[0].kind, 'post');
+    assert.ok(Math.abs(busyOf(team[0]) - 0.7) < 1e-9);
+
+    // Another ability too: the post becomes a form that has both.
+    const both = recommendTeam({ pieces: [post(0.4), work('Artisanship', 3, 0.3)], dex, caps });
+    assert.equal(both.length, 1);
+    assert.ok(both[0].form.abilities.Lightning >= 3 && both[0].form.abilities.Artisanship >= 3, both[0].form.name);
+
+    // A whole day at its unit leaves no room: the work gets an Aniimo of its own.
+    assert.equal(recommendTeam({ pieces: [post(1), work('Lightning', 3, 0.3)], dex, caps }).length, 2);
+
+    // Ahead of residents: a post with time to spare takes the work, and no resident steps away.
+    const well = { ability: 'Water', level: 3, busy: 1, personality: null, kind: 'resident', feedsLevelUp: false };
+    const watering = work('Water', 1, 0.05, { jobs: new Map([['Watering', new Set(['Farmland'])]]) });
+    const ahead = recommendTeam({ pieces: [well, post(0.4), watering], dex, caps, limit: 2 });
+    assert.equal(ahead.length, 2);
+    assert.equal(ahead.find(a => a.kind === 'resident').leave, 0);
+    assert.ok(ahead.find(a => a.kind === 'post').pieces.some(p => p.ability === 'Water'));
+
+    // Not ahead of the least busy, though: a busy post (0.7) keeps to its unit while the extra work
+    // goes to a lighter Aniimo (0.35), rather than the post taking some (0.8 and 0.25).
+    const lightly = recommendTeam({ pieces: [post(0.7), work('Lightning', 3, 0.1), work('Lightning', 3, 0.25)], dex, caps });
+    assert.equal(lightly.length, 2);
+    assert.equal(lightly.find(a => a.kind === 'post').pieces.length, 1);
+    const loads = lightly.map(busyOf).sort((a, b) => a - b);
+    assert.ok(Math.abs(loads[0] - 0.35) < 1e-9 && Math.abs(loads[1] - 0.7) < 1e-9, loads.join());
 }
