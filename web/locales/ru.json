@@ -835,7 +835,7 @@
   "Spare-time haulers: {names}": "Переносят в свободное время: {names}",
   "(e.g. {name})": "(например, {name})",
   "Suggested Aniimo lineup": "Рекомендуемый состав Аниимо",
-  "Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator and environment buildings take any level and never leave, so any Aniimo with the ability will do there.": "Настоящие Аниимо для этой команды в пределах уровней, заданных выше. Один Аниимо выполняет несколько работ, даже разных способностей, пока в его дне есть время; генератору и зданиям среды подходит любой уровень, и они не покидают пост, так что там годится любой Аниимо с этой способностью.",
+  "Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator's and environment buildings' Aniimo never leave, and any with the ability will do there: at any level for an environment building, at the generator's own level (up to 3) for the generator.": "Настоящие Аниимо для этой команды в пределах уровней, заданных выше. Один Аниимо выполняет несколько работ, даже разных способностей, пока в его дне есть время; Аниимо генератора и зданий среды не покидают пост, и там годится любой с этой способностью: любого уровня для здания среды, уровня самого генератора (до 3) для генератора.",
   "Working out the lineup…": "Подбираем состав…",
   "any Aniimo with this": "любой Аниимо с этим",
   "saved": "из сохранённого"

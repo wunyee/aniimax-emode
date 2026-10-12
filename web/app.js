@@ -3485,6 +3485,13 @@ const ENVIRONMENT_BUILDING_ABILITY = {
 // runs on it: a Lightning one, of any level.
 const GENERATOR_ABILITY = 'Lightning';
 
+// The Lightning level the Crackle Generator's Aniimo needs: the generator's own level, up to 3
+// (a level-1 generator takes Lightning 1, level 2 takes 2, level 3 and up take 3).
+function generatorAniimoLevel(watts = getGeneratorCapacity()) {
+    const level = GENERATOR_CAPACITY_OPTIONS.find(option => option.watts === watts)?.level ?? 1;
+    return Math.min(3, level);
+}
+
 // A colored ability tag, like the game's.
 function abilityTag(name) {
     const a = ABILITY_BY_NAME.get(name);
@@ -3727,10 +3734,12 @@ function teamPieces(plan, fixedNeeds) {
     growers.forEach(g => pieces.push(g));
     if (!pieces.length && !fixedNeeds.length) return null;
     const fixedRows = new Map();
-    fixedNeeds.forEach(({ ability, units, place }) => {
-        if (!fixedRows.has(ability)) fixedRows.set(ability, { count: 0, places: new Set() });
-        fixedRows.get(ability).count += units;
-        fixedRows.get(ability).places.add(place);
+    fixedNeeds.forEach(({ ability, units, place, level = 1 }) => {
+        if (!fixedRows.has(ability)) fixedRows.set(ability, { count: 0, places: new Set(), level: 1 });
+        const row = fixedRows.get(ability);
+        row.count += units;
+        row.places.add(place);
+        row.level = Math.max(row.level, level);
     });
     const fixedCount = [...fixedRows.values()].reduce((sum, r) => sum + r.count, 0);
     return { pieces, fixedRows, fixedCount };
@@ -3806,7 +3815,9 @@ function lineupSection(team, fixedRows, fixedCount) {
         rows.set(key, { name, abilities, personalities, busy, where, count: 1 });
     });
     const fixedHtml = [...fixedRows]
-        .map(([ability, r]) => `<tr><td data-label="Aniimo"><span class="team-member"><span class="ability-dots">${teamDot(ability, '·', false, `${ability} any level`)}</span> any level</span></td><td data-label="How many">${r.count}</td><td data-label="Busy on average">${r.count.toFixed(2)}</td><td data-label="Where">${[...r.places, 'stays at its post'].join(', ')}</td></tr>`)
+        .map(([ability, r]) => `<tr><td data-label="Aniimo"><span class="team-member">${r.level > 1
+            ? `<span class="ability-dots">${teamDot(ability, r.level, false, `${ability} Lv.${r.level}`)}</span> any Aniimo with this`
+            : `<span class="ability-dots">${teamDot(ability, '·', false, `${ability} any level`)}</span> any level`}</span></td><td data-label="How many">${r.count}</td><td data-label="Busy on average">${r.count.toFixed(2)}</td><td data-label="Where">${[...r.places, 'stays at its post'].join(', ')}</td></tr>`)
         .join('');
     // Who can haul in their spare time.
     const haulers = [...new Set(team
@@ -3819,7 +3830,7 @@ function lineupSection(team, fixedRows, fixedCount) {
         .map(r => `<tr><td data-label="Aniimo"><span class="team-member">${r.name ? `<strong>${r.name}</strong><br>` : ''}${r.abilities}${r.personalities ? `<br>${r.personalities}` : ''}</span></td><td data-label="How many">${r.count}</td><td data-label="Busy on average">${r.busy.toFixed(2)}</td><td data-label="Where">${r.where}</td></tr>`)
         .join('');
     return `${head(team.length + fixedCount + (haulers.length ? 0 : 1))}
-            <p class="hint small">Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator and environment buildings take any level and never leave, so any Aniimo with the ability will do there.</p>
+            <p class="hint small">Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator's and environment buildings' Aniimo never leave, and any with the ability will do there: at any level for an environment building, at the generator's own level (up to 3) for the generator.</p>
             <div class="table-wrapper">
                 <table class="facility-plan-table team-table">
                     <thead><tr><th>Aniimo</th><th>How many</th><th>Busy on average</th><th>Where</th></tr></thead>
@@ -3906,16 +3917,20 @@ function renderAniimoSummary(plan) {
         });
     });
     // Environment buildings in use each keep an Aniimo busy (abilities confirmed in game; whether
-    // level or personality matters isn't known yet, so any level is shown).
+    // level or personality matters isn't known yet, so any level is shown). So does the Crackle
+    // Generator, at Lightning as high as its own level, up to 3 (see `generatorAniimoLevel`).
     // Kept by unit too, for the lineup by species (see `showLineup`): these never leave.
     const fixedNeeds = [];
     const needsAniimo = (building, units, place) => {
-        const ability = building === 'Crackle Generator' ? GENERATOR_ABILITY : ENVIRONMENT_BUILDING_ABILITY[building];
+        const generator = building === 'Crackle Generator';
+        const ability = generator ? GENERATOR_ABILITY : ENVIRONMENT_BUILDING_ABILITY[building];
         if (!ability || !units) return;
-        fixedNeeds.push({ ability, units, place });
+        const level = generator ? planContext?.generatorLevel ?? generatorAniimoLevel() : 1;
+        fixedNeeds.push({ ability, units, place, level });
         const key = `${ability} (environment)`;
         if (!groups.has(key)) {
-            groups.set(key, { label: `${ability} any level`, ability, level: 1, bonus: false, busy: 0, where: new Map(), jobs: new Map(), environment: true });
+            const label = level > 1 ? `${ability} Lv.${level}` : `${ability} any level`;
+            groups.set(key, { label, ability, level, bonus: false, busy: 0, where: new Map(), jobs: new Map(), environment: true });
         }
         const g = groups.get(key);
         g.busy += units;
@@ -4039,7 +4054,7 @@ function renderAniimoSummary(plan) {
         const where = whereText(g);
         const tip = `${g.count > 1 ? `${g.count}× ` : ''}${g.label}${g.bonus ? ' (+20% speed)' : ''} · ${where}`;
         const times = g.count > 1 ? `<span class="ability-times">×${g.count}</span>` : '';
-        return `<span class="ability-kind">${dot(g.ability, g.environment ? '·' : g.level, g.bonus, tip)}${times}</span>`;
+        return `<span class="ability-kind">${dot(g.ability, g.environment && g.level <= 1 ? '·' : g.level, g.bonus, tip)}${times}</span>`;
     };
     document.getElementById('aniimo-abilities').innerHTML = ABILITIES.map(a => {
         const n = a.name === 'Hauling' ? `${needed.get(a.name) + 1}+` : needed.get(a.name);
@@ -5523,6 +5538,8 @@ async function runFindPlan() {
             // Only what the player skipped; locked special recipes are the default, not news.
             skipped: [...skippedRecipes].sort((a, b) => prettyItem(a).localeCompare(prettyItem(b))),
             simple: isSimpleMode(),
+            // The generator this plan is for, for its Aniimo's level (see `generatorAniimoLevel`).
+            generatorLevel: generatorAniimoLevel(),
         };
         startProgress(input, runId);
 
