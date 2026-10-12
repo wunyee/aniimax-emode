@@ -18,10 +18,13 @@ Thanks for helping improve Aniimax. Bug reports, verified game data, tests, and 
 | Browser app | `web/index.html`, `web/app.js`, `web/worker.js`, `web/style.css` |
 | Browser facility definitions | `web/facility-config.js` |
 | Browser tests | `tests/*.mjs` |
+| Aniimo Homeland abilities | `data/aniimo_homeland.csv`, generated from the game files by `tools/export_homeland_abilities.py` |
 
 `web/facility-config.js` is the frontend source of truth for facilities. Keep its names in sync with Rust and CSV data when changing a facility. Preserve deterministic planning, whole-unit grower allocation, and one recipe per processor when changing optimization behavior.
 
 Do not edit or commit generated `target/` or `web/pkg/` files.
+
+`data/aniimo_homeland.csv` lists every form of every Aniimo with a handbook number and the level of each Homeland ability it has (0 when it has none). Don't edit it by hand: after a game update, regenerate it with `python tools/export_homeland_abilities.py [GAME_DIR]` (standard library only; `GAME_DIR` defaults to `D:/SteamLibrary/steamapps/common/Aniimo`). The script only reads the game directory.
 
 ## Set up locally
 
