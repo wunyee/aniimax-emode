@@ -1001,5 +1001,14 @@
   "A suggested placement: every electric unit at least partly inside the generator's 11×11 range or a power pole's 7×7, each pole partly inside a range already powered.": "建議擺放：每台用電設施只要有一部分在發電機 11×11 或電線桿 7×7 的範圍內就有電，電線桿也只要有一部分在已有電力的範圍裡。",
   "Season crops to keep growing": "固定種植的季節作物",
   "The fewest Farmland plots to keep growing each season crop, e.g. to find its variants for season quests. Plans grow at least this many, even when something else would earn more.": "每種季節作物至少要持續種植的農田地塊數，例如為了收集活動任務需要的變異作物。即使種別的作物更賺錢，計畫也會至少種這麼多塊。",
-  "Season crops to keep growing take {wanted} Farmland plots, but you have {farmland}.": "固定種植的季節作物需要 {wanted} 塊農田，但你只有 {farmland} 塊。"
+  "Season crops to keep growing take {wanted} Farmland plots, but you have {farmland}.": "固定種植的季節作物需要 {wanted} 塊農田，但你只有 {farmland} 塊。",
+  "stays at its post": "專職，不離開崗位",
+  "steps away {n}% of the day and makes that much less there": "每天離開崗位 {n}%，該設施產量也少這麼多",
+  "no Aniimo in the handbook has this within your levels": "圖鑑中沒有在你設定的等級內能做這項工作的伊莫",
+  "Spare-time haulers: {names}": "空閒時也能搬運：{names}",
+  "(e.g. {name})": "（例：{name}）",
+  "Suggested Aniimo lineup": "建議伊莫組成",
+  "Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator and environment buildings take any level and never leave, so any Aniimo with the ability will do there.": "依上方設定的等級，為這支隊伍推薦實際可取得的伊莫。只要一天還有空檔，一隻伊莫可以兼做好幾份工作，即使能力不同也可以；劈啪發電機和環境建築任何等級都行且不離開崗位，所以只要有該能力的伊莫都可以。",
+  "Working out the lineup…": "正在計算建議組成…",
+  "any Aniimo with this": "任何有此能力等級的伊莫"
 }

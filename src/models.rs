@@ -257,6 +257,23 @@ pub fn base_item_name(name: &str) -> &str {
 /// third (see [`crew_variants`]).
 pub const CREW_SUFFIX: &str = "__by";
 
+/// One form of one Aniimo species in the game's handbook and the Homeland abilities it has, from
+/// `aniimo_homeland.csv` (exported from the game files by `tools/export_homeland_abilities.py`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct DexAniimo {
+    /// The handbook number, e.g. 1 for Emberpup.
+    pub number: u32,
+    /// The game's id for this species and form.
+    pub pet_id: u32,
+    pub form_id: u32,
+    pub name: String,
+    pub name_zh_tw: String,
+    pub form: String,
+    pub form_zh_tw: String,
+    /// Each ability this form has, with its level; abilities it hasn't got are left out.
+    pub abilities: std::collections::BTreeMap<String, u32>,
+}
+
 /// One kind of Aniimo on the player's roster: how many they have that are alike, the homeland
 /// abilities each has with its level (an Aniimo can have several, e.g. Fire 3 and Hauling 3), and
 /// its four personalities, one from each opposed pair.

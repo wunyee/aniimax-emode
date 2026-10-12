@@ -2162,6 +2162,15 @@ pub fn get_all_items() -> String {
     serde_json::to_string(&recipes).unwrap_or_default()
 }
 
+/// Every form of every Aniimo in the handbook with its Homeland abilities, embedded in the web
+/// build; see `data/aniimo_homeland.csv`.
+#[wasm_bindgen]
+pub fn get_aniimo_dex() -> String {
+    let dex = crate::data::parse_aniimo_homeland(include_str!("../data/aniimo_homeland.csv"))
+        .expect("embedded aniimo_homeland.csv is valid");
+    serde_json::to_string(&dex).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{embedded_aniimo_requirements, embedded_grower_steps, get_embedded_items};

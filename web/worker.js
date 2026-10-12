@@ -18,7 +18,7 @@ const ready = import('./pkg/aniimax.js' + load).then(async (pkg) => {
 
 // Handlers taking a single string argument and returning one; `find_plan` and
 // `rank_improvements` are handled separately below since they report progress.
-const HANDLER_NAMES = ['time_to_reach', 'get_version', 'get_all_items'];
+const HANDLER_NAMES = ['time_to_reach', 'get_version', 'get_all_items', 'get_aniimo_dex'];
 
 // HiGHS (https://highs.dev), compiled to WebAssembly. A fresh instance per solve, from bytes
 // fetched once, so one failed solve can't leave a broken instance behind for the next.

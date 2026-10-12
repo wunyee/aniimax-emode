@@ -3165,3 +3165,72 @@ tr:hover .skip-row,
 .layout-emode-piece rect {
     filter: drop-shadow(0 0 1px rgba(250, 204, 21, 0.4));
 }
+
+/* The suggested lineup: at the bottom of the team card, closed until opened, read like the team
+   table once it is. */
+.team-lineup {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+}
+
+.team-lineup-title {
+    cursor: pointer;
+    width: fit-content;
+    font-size: 0.95rem;
+    font-weight: 600;
+    user-select: none;
+}
+
+.team-lineup[open] > .team-lineup-title {
+    margin-bottom: 0.25rem;
+}
+
+.team-lineup-count {
+    display: inline-block;
+    min-width: 1.6rem;
+    margin-left: 0.4rem;
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    text-align: center;
+    font-size: 0.8rem;
+}
+
+.team-lineup .team-table {
+    width: 100%;
+}
+
+/* Names and numbers on one line; what each works takes the rest of the width. */
+.team-table th:nth-child(-n+3),
+.team-table td:nth-child(-n+3) {
+    white-space: nowrap;
+}
+
+.team-table td:first-child {
+    min-width: 12rem;
+}
+
+.team-table td:nth-child(2),
+.team-table td:nth-child(3) {
+    text-align: center;
+}
+
+/* One Aniimo of the team by species: its name, then a circle per ability. */
+.team-member .ability-dots {
+    margin: 0.2rem 0;
+    /* Room for a bonus ring on the last circle. */
+    padding: 0 4px;
+}
+
+/* Stacked on a phone, each cell's content sits on the right of its label. */
+@media (max-width: 600px) {
+    .team-member .ability-dots {
+        justify-content: flex-end;
+    }
+
+    .team-table td:first-child {
+        min-width: 0;
+    }
+}

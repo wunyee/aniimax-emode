@@ -39,6 +39,47 @@ pub fn load_aniimo_requirements(data_dir: &Path) -> Result<AniimoRequirements, B
     parse_aniimo_requirements(&std::fs::read_to_string(data_dir.join("aniimo_requirements.csv"))?)
 }
 
+/// The columns of `aniimo_homeland.csv` before its ability columns.
+const DEX_COLUMNS: [&str; 7] = ["number", "pet_id", "form_id", "name", "name_zh_tw", "form", "form_zh_tw"];
+
+/// Parses the contents of `aniimo_homeland.csv`: one row per form of each Aniimo in the handbook,
+/// its names, then one column per Homeland ability with the form's level (0 when it hasn't got it).
+pub fn parse_aniimo_homeland(csv_text: &str) -> Result<Vec<crate::models::DexAniimo>, Box<dyn Error>> {
+    let mut rdr = ReaderBuilder::new().trim(csv::Trim::All).from_reader(csv_text.as_bytes());
+    let headers = rdr.headers()?.clone();
+    if headers.iter().take(DEX_COLUMNS.len()).ne(DEX_COLUMNS) {
+        return Err(format!("aniimo_homeland.csv should start with {DEX_COLUMNS:?}").into());
+    }
+    let mut forms = Vec::new();
+    for record in rdr.records() {
+        let record = record?;
+        let field = |i: usize| record.get(i).unwrap_or_default().to_string();
+        let mut abilities = std::collections::BTreeMap::new();
+        for (i, ability) in headers.iter().enumerate().skip(DEX_COLUMNS.len()) {
+            let level: u32 = record.get(i).unwrap_or_default().parse()?;
+            if level > 0 {
+                abilities.insert(ability.to_string(), level);
+            }
+        }
+        forms.push(crate::models::DexAniimo {
+            number: field(0).parse()?,
+            pet_id: field(1).parse()?,
+            form_id: field(2).parse()?,
+            name: field(3),
+            name_zh_tw: field(4),
+            form: field(5),
+            form_zh_tw: field(6),
+            abilities,
+        });
+    }
+    Ok(forms)
+}
+
+/// Loads `aniimo_homeland.csv` from the data directory; see [`parse_aniimo_homeland`].
+pub fn load_aniimo_homeland(data_dir: &Path) -> Result<Vec<crate::models::DexAniimo>, Box<dyn Error>> {
+    parse_aniimo_homeland(&std::fs::read_to_string(data_dir.join("aniimo_homeland.csv"))?)
+}
+
 /// One row of `grower_steps.csv`.
 #[derive(Debug, serde::Deserialize)]
 struct GrowerStepRow {

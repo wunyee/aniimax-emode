@@ -351,6 +351,25 @@ export const PERSONALITY_PAIRS = [
     { letters: ['P', 'J'], names: ['Playful', 'Judicious'] },
 ];
 
+// Recipes only one family of Aniimo can work, whatever its Leisure level (checked in game): the
+// handbook numbers of the family, first to last (see `data/aniimo_homeland.csv`). `items` limits
+// it to those recipes; without it, every recipe of the facility.
+export const RECIPE_FAMILIES = [
+    { facility: 'Tidewhisper Sandcastle', items: ['sea_salt', 'quick_sea_salt'], numbers: [49, 52] },
+    { facility: 'Tidewhisper Sandcastle', items: ['pearl'], numbers: [53, 55] },
+    { facility: 'Dewy House', numbers: [38, 39] },
+    { facility: 'Nimbus Bed', numbers: [17, 19] },
+    { facility: 'Starfall Hammock', numbers: [5, 6] },
+    { facility: 'Floral Windmill', numbers: [28, 29] },
+];
+
+// The handbook numbers `[first, last]` of the only family that can make `item` at `facility`, or
+// null when any Aniimo with the ability can.
+export function recipeFamily(facility, item) {
+    const base = String(item || '').split('__')[0];
+    return RECIPE_FAMILIES.find(f => f.facility === facility && (!f.items || f.items.includes(base)))?.numbers ?? null;
+}
+
 /// The letter the game shows for a personality, and the personality it rules out.
 export function personalityLetter(name) {
     const pair = PERSONALITY_PAIRS.find(p => p.names.includes(name));

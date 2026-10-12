@@ -6,11 +6,12 @@ import './math-translation.js';
 import {
     FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME, FACILITY_FOOTPRINTS, HOMELAND_PLOTS, HOMELAND_PLOT_SIZE,
     MAX_HOME_LEVEL, ANIIMO_MAX, simpleSetup,
-    LEVEL_UP_COSTS, LEVEL_UP_CHAINS, SPECIAL_RECIPES, SEASON, ANIIPOD_TIERS, PERSONALITY_PAIRS, personalityLetter, opposedPersonality,
+    LEVEL_UP_COSTS, LEVEL_UP_CHAINS, SPECIAL_RECIPES, SEASON, ANIIPOD_TIERS, PERSONALITY_PAIRS, personalityLetter, opposedPersonality, recipeFamily,
     FACILITY_POWER_WATTS, DEFAULT_GENERATOR_WATTS, GENERATOR_WATTS_BY_HOME_LEVEL, GENERATOR_CAPACITY_OPTIONS,
     GENERATOR_POWER_RANGE, POLE_POWER_RANGE, POWER_POLE_COUNTS_BY_RV,
 } from './facility-config.js';
 import { createShareUrl, readShareHash, urlWithoutShare } from './share-config.js';
+import { recommendTeam, formsReaching } from './aniimo-team.js';
 
 let wasmReady = false;
 
@@ -64,7 +65,8 @@ function restartWorker() {
 
 // Sends one request to the worker and resolves with its result (or rejects with its error);
 // `type` is one of worker.js's `HANDLER_NAMES` or `'find_plan'`, and `payload` that function's
-// own single string argument (omit for `get_version`/`get_all_items`, which take none).
+// own single string argument (omit for `get_version`/`get_all_items`/`get_aniimo_dex`, which
+// take none).
 // `onProgress(count)`, if given, gets each progress message before the result: `find_plan`
 // sends every solve step and, from the backup planner, its trial count; see worker.js.
 function callWorker(type, payload, onProgress) {
@@ -961,6 +963,7 @@ async function initWasm() {
 
         document.getElementById('version').textContent = version;
         loadRecipeIndex();
+        loadAniimoDex();
 
         console.log(`Aniimax v${version} loaded successfully`);
     } catch (error) {
@@ -1220,9 +1223,12 @@ function improvementCandidates(base, setup) {
         for (const ability of levelledAbilities().filter(a => abilities.has(a))) {
             const level = base.aniimo_levels[ability] ?? defaultLevelFor(ability);
             for (const next of levelsAbove(level, defaultLevelFor(ability))) {
+                // One Aniimo that has it, every other level kept as set (see aniimo-team.js).
+                const reaching = formsReaching(aniimoDex, base.aniimo_levels, ability, next)[0];
                 candidates.push({
                     kind: 'Aniimo', group: `aniimo:${ability}`, family: `${ability} Aniimo`, level: next,
                     label: `${ability} Aniimo Lv.${next}`,
+                    example: reaching ? dexName(reaching) : null,
                     input: { ...base, aniimo_levels: { ...base.aniimo_levels, [ability]: next } },
                 });
             }
@@ -1460,7 +1466,7 @@ function renderImprovements() {
     // the list open if the player opened it.
     const open = !!document.querySelector('#improve-list .improve-checked')?.open;
     // One more Aniimo is a section of its own: it's more work to keep, not something to unlock.
-    const list = items => `<ol class="improve-list">${items.map(r => `<li><span class="improve-name">${r.candidate.label}</span><span class="improve-gain">${r.gain.text}</span></li>`).join('')}</ol>`;
+    const list = items => `<ol class="improve-list">${items.map(r => `<li><span class="improve-name">${r.candidate.label}${r.candidate.example ? ` <span class="improve-example">(e.g. ${escapeText(r.candidate.example)})</span>` : ''}</span><span class="improve-gain">${r.gain.text}</span></li>`).join('')}</ol>`;
     const more = rows.filter(r => r.candidate.kind === 'One more Aniimo');
     const rest = rows.filter(r => r.candidate.kind !== 'One more Aniimo');
     document.getElementById('improve-list').innerHTML = improvementsChecked(best, status, open)
@@ -2310,6 +2316,8 @@ function showSetupOnly() {
     content.classList.add('setup-only');
     document.getElementById('aniimo-collapsed-summary').textContent = '';
     document.getElementById('aniimo-summary').innerHTML = '';
+    document.getElementById('aniimo-lineup').innerHTML = '';
+    currentLineup = null;
     document.getElementById('aniimo-abilities').innerHTML = '';
     document.getElementById('aniimo-count').hidden = true;
 }
@@ -2531,6 +2539,19 @@ document.addEventListener('aniimax-language-change', () => {
         input.setCustomValidity('');
     }
 });
+
+// Every form of every Aniimo in the handbook with its Homeland abilities (see `get_aniimo_dex` in
+// wasm.rs), for naming the team a plan needs; empty until loaded, when the team reads by ability.
+let aniimoDex = [];
+
+async function loadAniimoDex() {
+    try {
+        aniimoDex = JSON.parse(await callWorker('get_aniimo_dex'));
+        if (lastPlan?.success) renderAniimoSummary(lastPlan);
+    } catch (error) {
+        console.warn('Could not load the Aniimo handbook:', error);
+    }
+}
 
 async function loadRecipeIndex() {
     try {
@@ -3573,11 +3594,266 @@ function aniimoNeeds(g) {
     return `Lv.${g.level}${personalities ? ` · ${personalities}` : ''}`;
 }
 
+// Facilities whose Aniimo stays at its post (every unit kept busy all day): the Mine, the Well and
+// every Aniimo Materials facility. It may step away for a little of its day (see aniimo-team.js).
+const TEAM_RESIDENTS = new Set(['Mine', 'Well', ...RESIDENT_FACILITIES]);
+
+// A circle for one ability of a team member, in the same style as the counts above the team.
+function teamDot(ability, text, bonus, tip) {
+    const a = ABILITY_BY_NAME.get(ability);
+    return `<span class="ability-dot small${a && a.dark ? ' dark' : ''}${bonus ? ' bonus' : ''}" style="--ability:${a ? a.color : '#888888'}" title="${tip}" aria-label="${tip}">${text}</span>`;
+}
+
+// A form's name as the game shows it in the current language: "小炭狗(高山型態)", "Emberpup
+// (Highland Form)".
+function dexName(form) {
+    return currentLocale() === 'zh-TW'
+        ? `${form.name_zh_tw}(${form.form_zh_tw})`
+        : `${form.name} (${form.form})`;
+}
+
+// Every item that goes into the next level-up's materials, however many steps back: the level-up
+// recipes' ingredients, what those are made from, and the byproducts (Wood Blocks, Mineral Sand)
+// with whatever yields them. Empty unless the plan is for a level-up.
+function levelUpFeeders() {
+    if (!planContext?.levelUp || planContext.ready || planContext.unavailable) return new Set();
+    const feeds = new Set(['wood_block', 'mineral_sand']);
+    recipeIndex.filter(r => r.levelUpMaterial).forEach(r => r.ingredients.forEach(i => feeds.add(i)));
+    for (let grew = true; grew;) {
+        grew = false;
+        for (const r of recipeIndex) {
+            if (!feeds.has(r.name) && !(r.byproduct && feeds.has(r.byproduct))) continue;
+            for (const i of r.ingredients) {
+                if (!feeds.has(i)) {
+                    feeds.add(i);
+                    grew = true;
+                }
+            }
+        }
+    }
+    return feeds;
+}
+
+// The suggested lineup (see aniimo-team.js) is worked out in a worker of its own, so the rest of
+// the results show at once; each plan's lineups are kept, so drawing the plan again doesn't redo it.
+let teamWorker = null;
+let nextTeamRequest = 0;
+const teamRequests = new Map();
+const lineupCache = new WeakMap();
+
+function workOutTeam(args) {
+    if (!teamWorker) {
+        try {
+            teamWorker = new Worker(`./team-worker.js?load=${Date.now()}`, { type: 'module' });
+            teamWorker.onmessage = ({ data }) => {
+                const pending = teamRequests.get(data.id);
+                teamRequests.delete(data.id);
+                if (data.error) pending?.reject(new Error(data.error));
+                else pending?.resolve(data.team);
+            };
+        } catch (error) {
+            // No module workers here: work it out on this page, after the rest has drawn.
+            return new Promise(resolve => setTimeout(() => resolve(recommendTeam(args)), 0));
+        }
+    }
+    return new Promise((resolve, reject) => {
+        const id = ++nextTeamRequest;
+        teamRequests.set(id, { resolve, reject });
+        teamWorker.postMessage({ id, args });
+    });
+}
+
+// The Aniimo work in the shown plan, as aniimo-team.js takes it: `{ pieces, fixedRows,
+// fixedCount }`, or null if nothing in it needs an Aniimo. `fixedNeeds` are the Crackle
+// Generator's and environment buildings' Aniimo, which work at any level and never leave, so any
+// Aniimo with the ability will do: no form is suggested for them.
+function teamPieces(plan, fixedNeeds) {
+    const feeds = levelUpFeeders();
+    const pieces = [];
+    const growers = new Map();
+    (plan.coin_items || []).forEach(step => {
+        (step.aniimo_tasks || []).forEach(task => {
+            // A growing job is the job itself across every crop, at any level.
+            if ((task.jobs || []).length) {
+                if (!growers.has(task.ability)) {
+                    growers.set(task.ability, { ability: task.ability, level: task.level, busy: 0, personality: null, kind: 'work', jobs: new Map() });
+                }
+                const g = growers.get(task.ability);
+                g.level = Math.max(g.level, task.level);
+                g.busy += task.busy;
+                task.jobs.forEach(job => {
+                    if (!g.jobs.has(job)) g.jobs.set(job, new Set());
+                    g.jobs.get(job).add(step.facility);
+                });
+                return;
+            }
+            const personality = task.personality_bonus ? FACILITIES.find(f => f.name === step.facility)?.personality ?? null : null;
+            const piece = {
+                ability: task.ability, level: task.level, personality, family: recipeFamily(step.facility, step.item_name),
+                place: `${step.facility} (${prettyItem(step.item_name)})`,
+            };
+            if (TEAM_RESIDENTS.has(step.facility)) {
+                const byproduct = recipeIndex.find(r => r.name === step.item_name)?.byproduct;
+                const feedsLevelUp = feeds.has(step.item_name) || (!!byproduct && feeds.has(byproduct));
+                for (let unit = 0; unit < Math.ceil(task.busy - 1e-6); unit++) {
+                    pieces.push({ ...piece, busy: 1, kind: 'resident', feedsLevelUp });
+                }
+            } else {
+                pieces.push({ ...piece, busy: task.busy, kind: 'work' });
+            }
+        });
+    });
+    growers.forEach(g => pieces.push(g));
+    if (!pieces.length && !fixedNeeds.length) return null;
+    const fixedRows = new Map();
+    fixedNeeds.forEach(({ ability, units, place }) => {
+        if (!fixedRows.has(ability)) fixedRows.set(ability, { count: 0, places: new Set() });
+        fixedRows.get(ability).count += units;
+        fixedRows.get(ability).places.add(place);
+    });
+    const fixedCount = [...fixedRows.values()].reduce((sum, r) => sum + r.count, 0);
+    return { pieces, fixedRows, fixedCount };
+}
+
+// The lineup section at the bottom of the team card: closed until the player opens it (and kept
+// as they left it when the plan is drawn again), with its table once `team` is worked out, or a
+// note that it's on its way.
+function lineupSection(team, fixedRows, fixedCount) {
+    const open = !!document.querySelector('#aniimo-lineup details[open]');
+    const head = count => `
+        <details class="team-lineup"${open ? ' open' : ''}>
+            <summary class="team-lineup-title"><span>Suggested Aniimo lineup</span> <span class="team-lineup-count">${count}</span></summary>`;
+    if (!team) return `${head('…')}<p class="hint small">Working out the lineup…</p></details>`;
+
+    const order = new Map(ABILITIES.map((a, i) => [a.name, i]));
+    // One circle per ability, like the counts above: its level inside, a ring where the plan counts
+    // on this Aniimo's personality bonus.
+    const abilitiesOf = aniimo => {
+        const bonus = new Set(aniimo.pieces.filter(p => p.personality).map(p => p.ability));
+        const abilities = aniimo.form ? Object.entries(aniimo.form.abilities) : [[aniimo.ability, aniimo.level]];
+        return `<span class="ability-dots">${abilities
+            .sort(([a], [b]) => (order.get(a) ?? 99) - (order.get(b) ?? 99))
+            .map(([ability, level]) => teamDot(ability, level, bonus.has(ability), `${ability} Lv.${level}`))
+            .join('')}</span>`;
+    };
+    const whereOf = aniimo => {
+        const places = new Set();
+        const jobs = [];
+        aniimo.pieces.forEach(p => {
+            if (p.jobs) {
+                p.jobs.forEach((at, job) => jobs.push(`${job} ${at.size > 1 ? 'crops' : listOf([...at].map(f => f.toLowerCase()))}`));
+            } else {
+                places.add(p.place);
+            }
+        });
+        const parts = [...places.keys()].concat(jobs);
+        if (aniimo.leave > 0) parts.push(`steps away ${Math.round(aniimo.leave * 100)}% of the day and makes that much less there`);
+        if (!aniimo.form) parts.push('no Aniimo in the handbook has this within your levels');
+        return parts.join(', ');
+    };
+    const needs = aniimo => [...aniimo.personalities].sort().map(name => `${name} (${personalityLetter(name)})`).join(', ');
+    // Which Aniimo it is only matters when it multitasks (time to spare for more work and hauling,
+    // or a resident stepping away), its work takes more than one ability, a recipe only one family
+    // makes, or level 4 (few have it). Otherwise any Aniimo with the ability at the level does it:
+    // a Well's, say, just works faster the higher its Water.
+    const named = aniimo => !aniimo.form
+        || (aniimo.kind === 'work' && aniimo.busy < 1 - 1e-6)
+        || aniimo.leave > 0
+        || new Set(aniimo.pieces.map(p => p.ability)).size > 1
+        || aniimo.pieces.some(p => p.family || p.level >= 4);
+    // The ability and level such an Aniimo needs, as one circle like the counts above.
+    const levelOf = aniimo => {
+        const level = Math.max(...aniimo.pieces.map(p => p.level));
+        const bonus = aniimo.pieces.some(p => p.personality);
+        return `<span class="ability-dots">${teamDot(aniimo.ability, level, bonus, `${aniimo.ability} Lv.${level}`)}</span> any Aniimo with this`;
+    };
+
+    // Alike Aniimo (same form, same work) share a row, with how many.
+    const rows = new Map();
+    team.forEach(aniimo => {
+        const specific = named(aniimo);
+        const name = specific && aniimo.form ? escapeText(dexName(aniimo.form)) : '';
+        const abilities = specific ? abilitiesOf(aniimo) : levelOf(aniimo);
+        const where = whereOf(aniimo);
+        const personalities = needs(aniimo);
+        const busy = aniimo.kind === 'resident' ? 1 : aniimo.busy;
+        const key = `${name}|${abilities}|${where}|${personalities}|${busy.toFixed(2)}`;
+        if (rows.has(key)) {
+            rows.get(key).count += 1;
+            return;
+        }
+        rows.set(key, { name, abilities, personalities, busy, where, count: 1 });
+    });
+    const fixedHtml = [...fixedRows]
+        .map(([ability, r]) => `<tr><td data-label="Aniimo"><span class="team-member"><span class="ability-dots">${teamDot(ability, '·', false, `${ability} any level`)}</span> any level</span></td><td data-label="How many">${r.count}</td><td data-label="Busy on average">${r.count.toFixed(2)}</td><td data-label="Where">${[...r.places, 'stays at its post'].join(', ')}</td></tr>`)
+        .join('');
+    // Who can haul in their spare time.
+    const haulers = [...new Set(team
+        .filter(a => a.kind === 'work' && named(a) && a.form?.abilities.Hauling && a.busy < 1 - 1e-6)
+        .map(a => escapeText(dexName(a.form))))];
+    const hauling = `<tr><td data-label="Aniimo"><span class="team-member"><span class="ability-dots">${teamDot('Hauling', '·', false, 'Hauling any level')}</span> any level</span></td><td data-label="How many">${haulers.length ? '0+' : '1+'}</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.${haulers.length ? `<br>Spare-time haulers: ${haulers.join(' / ')}` : ''}</td></tr>`;
+    // Named Aniimo first, then those any Aniimo with the ability can be.
+    const rowsHtml = [...rows.values()]
+        .sort((a, b) => Number(!a.name) - Number(!b.name) || a.name.localeCompare(b.name))
+        .map(r => `<tr><td data-label="Aniimo"><span class="team-member">${r.name ? `<strong>${r.name}</strong><br>` : ''}${r.abilities}${r.personalities ? `<br>${r.personalities}` : ''}</span></td><td data-label="How many">${r.count}</td><td data-label="Busy on average">${r.busy.toFixed(2)}</td><td data-label="Where">${r.where}</td></tr>`)
+        .join('');
+    return `${head(team.length + fixedCount + (haulers.length ? 0 : 1))}
+            <p class="hint small">Real Aniimo to get for this team, within the levels set above. One Aniimo works several jobs, even of different abilities, while its day has room; the Crackle Generator and environment buildings take any level and never leave, so any Aniimo with the ability will do there.</p>
+            <div class="table-wrapper">
+                <table class="facility-plan-table team-table">
+                    <thead><tr><th>Aniimo</th><th>How many</th><th>Busy on average</th><th>Where</th></tr></thead>
+                    <tbody>${rowsHtml}${fixedHtml}${hauling}</tbody>
+                </table>
+            </div>
+        </details>`;
+}
+
+// The lineup request whose answer is still wanted: a newer one makes an older one's answer stale.
+let currentLineup = null;
+
+// Shows the suggested lineup for `plan` under the team, within the levels set on the Best tab:
+// at once if it's been worked out already, else once the worker has it, if it's still the one
+// wanted by then. `holds`, if known, is how many Aniimo the homeland has room for.
+function showLineup(plan, fixedNeeds, holds) {
+    const container = document.getElementById('aniimo-lineup');
+    const work = aniimoDex.length ? teamPieces(plan, fixedNeeds) : null;
+    currentLineup = null;
+    if (!work) {
+        container.innerHTML = '';
+        return;
+    }
+    const { pieces, fixedRows, fixedCount } = work;
+    const caps = aniimoInput('best').aniimo_levels;
+    const limit = holds == null ? null : holds - fixedCount;
+    const key = JSON.stringify([caps, limit, selectedSetupTab()]);
+    if (!lineupCache.has(plan)) lineupCache.set(plan, new Map());
+    const cached = lineupCache.get(plan);
+    if (cached.has(key)) {
+        container.innerHTML = lineupSection(cached.get(key), fixedRows, fixedCount);
+        return;
+    }
+    container.innerHTML = lineupSection(null, fixedRows, fixedCount);
+    const request = {};
+    currentLineup = request;
+    workOutTeam({ pieces, dex: aniimoDex, caps, limit })
+        .then(team => {
+            cached.set(key, team);
+            if (currentLineup === request) container.innerHTML = lineupSection(team, fixedRows, fixedCount);
+        })
+        .catch(error => {
+            console.warn('Could not work out the Aniimo lineup:', error);
+            if (currentLineup === request) container.innerHTML = '';
+        });
+}
+
 // The Aniimo team the shown plan needs, one row per distinct ability / level / personality.
 // A row asks for enough Aniimo to cover its work on average (a facility waiting on ingredients
 // frees its Aniimo), rounded up; facilities with a resident Aniimo (Sandcastle and the like) are
 // always busy, so they count one each.
 function renderAniimoSummary(plan) {
+    // The lineup is for the Best and Minimum teams; My Aniimo are the player's own.
+    document.getElementById('aniimo-lineup').innerHTML = '';
+    currentLineup = null;
     if (selectedSetupTab() === 'custom') {
         renderRosterSummary(plan);
         return;
@@ -3610,9 +3886,12 @@ function renderAniimoSummary(plan) {
     });
     // Environment buildings in use each keep an Aniimo busy (abilities confirmed in game; whether
     // level or personality matters isn't known yet, so any level is shown).
+    // Kept by unit too, for the lineup by species (see `showLineup`): these never leave.
+    const fixedNeeds = [];
     const needsAniimo = (building, units, place) => {
         const ability = building === 'Crackle Generator' ? GENERATOR_ABILITY : ENVIRONMENT_BUILDING_ABILITY[building];
         if (!ability || !units) return;
+        fixedNeeds.push({ ability, units, place });
         const key = `${ability} (environment)`;
         if (!groups.has(key)) {
             groups.set(key, { label: `${ability} any level`, ability, level: 1, bonus: false, busy: 0, where: new Map(), jobs: new Map(), environment: true });
@@ -3702,6 +3981,9 @@ function renderAniimoSummary(plan) {
         })
         .join('');
     const haulingRow = `<tr><td data-label="Aniimo">${abilityTag('Hauling')} any level</td><td data-label="How many">1+</td><td data-label="Busy on average">?</td><td data-label="Where">Carries produce to storage. How much work this is isn't known yet; add more if produce piles up.</td></tr>`;
+    // With the handbook loaded, a lineup by species and form to go with it, multitasking across
+    // abilities, in a section of its own at the bottom of the card (worked out after the rest shows).
+    showLineup(plan, fixedNeeds, homelandHolds);
 
     // The count above says how many; this is only said when it's more than the homeland holds.
     const cap = homelandHolds;

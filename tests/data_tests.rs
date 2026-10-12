@@ -339,3 +339,22 @@ fn test_recipes_take_their_facility_ability() {
     }
     assert!(checked > 100, "only checked {checked} recipes");
 }
+
+// The handbook export: every form with its Homeland abilities, checked against forms seen in game.
+#[test]
+fn test_aniimo_homeland_dex() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let dex = aniimax::data::load_aniimo_homeland(data_dir).expect("Failed to load aniimo_homeland.csv");
+    let form = |pet_id: u32| dex.iter().find(|f| f.pet_id == pet_id).unwrap_or_else(|| panic!("{pet_id} missing"));
+    let levels = |pet_id: u32| form(pet_id).abilities.iter().map(|(a, l)| (a.as_str(), *l)).collect::<Vec<_>>();
+
+    let emberpup_highland = form(1005101);
+    assert_eq!((emberpup_highland.number, emberpup_highland.name.as_str()), (1, "Emberpup"));
+    assert_eq!(emberpup_highland.form_zh_tw, "高山型態");
+    assert_eq!(levels(1005101), [("Earth", 1), ("Fire", 1), ("Hauling", 1)]);
+    assert_eq!(levels(1020302), [("Artisanship", 4), ("Dark", 4), ("Grass", 3)]);
+    assert!(dex.iter().all(|f| !f.abilities.is_empty()), "every form has an ability");
+}
