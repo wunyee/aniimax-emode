@@ -2212,7 +2212,6 @@ tr:hover .skip-row,
 
 .seed-table table {
     width: 100%;
-    max-width: 32rem;
     border-collapse: collapse;
     font-size: 0.85rem;
 }

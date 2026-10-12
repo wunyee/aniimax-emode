@@ -305,6 +305,32 @@
                 <div id="error-message" class="card error-message" style="display: none;"></div>
 
                 <div id="results-content">
+                    <div class="card rate-card">
+                        <!-- A level-up plan leads with the level-up, and its table's rate column
+                             takes over the unit select and the coin rate below. -->
+                        <div class="level-up-card" id="level-up-card" style="display: none;">
+                            <span class="summary-label" id="level-up-label">Level-Up</span>
+                            <div class="summary-value" id="level-up-time">-</div>
+                            <div id="level-up-lines"></div>
+                        </div>
+                        <div id="rate-block">
+                        <span class="summary-label" id="rate-label">Your Rate</span>
+                        <div class="rate-line" id="rate-line">
+                            <span class="summary-value" id="plan-rate">-</span>
+                            <select id="rate-unit" class="rate-unit-select" aria-label="Rate unit">
+                                <option value="second">per second</option>
+                                <option value="minute">per minute</option>
+                                <option value="hour">per hour</option>
+                                <option value="day">per day</option>
+                            </select>
+                        </div>
+                        <div id="priority-rates"></div>
+                        </div>
+                        <p class="plan-proof" id="plan-explored-hint"></p>
+                        <p class="plan-unverified" id="plan-unverified" style="display: none;"></p>
+                        <p class="plan-skipped" id="plan-skipped" style="display: none;"></p>
+                    </div>
+
                     <div class="card aniimo-card" id="aniimo-card">
                         <div class="card-head">
                             <button type="button" class="collapse-toggle" id="aniimo-toggle" aria-expanded="false" aria-controls="aniimo-body">
@@ -335,32 +361,6 @@
                             <div id="aniimo-summary"></div>
                         </div>
                         <div id="aniimo-lineup"></div>
-                    </div>
-
-                    <div class="card rate-card">
-                        <!-- A level-up plan leads with the level-up, and its table's rate column
-                             takes over the unit select and the coin rate below. -->
-                        <div class="level-up-card" id="level-up-card" style="display: none;">
-                            <span class="summary-label" id="level-up-label">Level-Up</span>
-                            <div class="summary-value" id="level-up-time">-</div>
-                            <div id="level-up-lines"></div>
-                        </div>
-                        <div id="rate-block">
-                        <span class="summary-label" id="rate-label">Your Rate</span>
-                        <div class="rate-line" id="rate-line">
-                            <span class="summary-value" id="plan-rate">-</span>
-                            <select id="rate-unit" class="rate-unit-select" aria-label="Rate unit">
-                                <option value="second">per second</option>
-                                <option value="minute">per minute</option>
-                                <option value="hour">per hour</option>
-                                <option value="day">per day</option>
-                            </select>
-                        </div>
-                        <div id="priority-rates"></div>
-                        </div>
-                        <p class="plan-proof" id="plan-explored-hint"></p>
-                        <p class="plan-unverified" id="plan-unverified" style="display: none;"></p>
-                        <p class="plan-skipped" id="plan-skipped" style="display: none;"></p>
                     </div>
 
                     <div class="card production-steps" id="improve-card" style="display: none;">
