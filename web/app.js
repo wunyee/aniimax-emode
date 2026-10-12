@@ -4626,7 +4626,7 @@ function handAniimoFor(facility, plan) {
 
 // When the player switches Benches and Kilns by hand, the units the switching schedule works by
 // hand beyond those the plan's own rows staff, as plan rows of their own for the Aniimo team: one
-// each, busy for the share of the schedule it's making something. Empty otherwise.
+// each, busy for the time its batches take. Empty otherwise.
 function scheduledHandSteps(plan) {
     if (!lastPlanInput?.rotate_tiers || !plan.level_up || selectedSetupTab() === 'custom') return [];
     const steps = [];
@@ -4636,9 +4636,17 @@ function scheduledHandSteps(plan) {
         const staffed = planUnits(plan, false)[facility] || 0;
         const aniimo = handAniimoFor(facility, plan);
         if (!aniimo) continue;
+        // A batch's time by hand, at the ability level and personality the plan's Aniimo setup
+        // gives its worker (see `level_up_times`).
+        const batch = item => (plan.level_up_times || []).find(([name, electric]) => name === item && !electric)?.[2]
+            ?? (plan.level_up_times || []).find(([name]) => name === item)?.[2] ?? 0;
         schedule.units.filter(unit => !unit.electric).slice(staffed).forEach(unit => {
             const working = unit.days.filter(d => d.item && !d.after);
-            const busy = Math.min(1, working.reduce((sum, d) => sum + Math.min(d.to, schedule.hours) - d.from, 0) / schedule.hours);
+            // Only the batches it makes take its time: the rest of each period it waits on
+            // ingredients (the Mineral Sand or Wood Blocks come in at their own pace), free for
+            // other work. Not the whole period it's set to a tier.
+            const seconds = working.reduce((sum, d) => sum + d.made * batch(d.item), 0);
+            const busy = Math.min(1, seconds / (schedule.hours * 3600));
             if (busy <= 0) return;
             steps.push({
                 facility, facility_count: 1, item_name: working[0].item, status: 'producing', is_emode: false, aniimo,
