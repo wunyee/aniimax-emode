@@ -2570,7 +2570,7 @@ async function loadAniimoDex() {
 async function loadRecipeIndex() {
     try {
         recipeIndex = JSON.parse(await callWorker('get_all_items'))
-            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none', currency: r.sell_currency || 'coins' }))
+            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none', currency: r.sell_currency || 'coins', aniimo: r.aniimo || null }))
             .sort((a, b) => a.facility.localeCompare(b.facility) || a.name.localeCompare(b.name));
         renderRecipeOptions();
         renderSkippedRecipes();
@@ -3685,7 +3685,7 @@ function teamPieces(plan, fixedNeeds) {
     const feeds = levelUpFeeders();
     const pieces = [];
     const growers = new Map();
-    (plan.coin_items || []).forEach(step => {
+    teamSteps(plan).forEach(step => {
         (step.aniimo_tasks || []).forEach(task => {
             // A growing job is the job itself across every crop, at any level.
             if ((task.jobs || []).length) {
@@ -3874,7 +3874,7 @@ function renderAniimoSummary(plan) {
     }
     const container = document.getElementById('aniimo-summary');
     const groups = new Map();
-    (plan.coin_items || []).forEach(step => {
+    teamSteps(plan).forEach(step => {
         (step.aniimo_tasks || []).forEach(task => {
             const key = taskLabel(task, step.facility);
             if (!groups.has(key)) {
@@ -4584,6 +4584,53 @@ function scheduleGroups(schedule) {
     return { fixed: [...fixed.values()], switching };
 }
 
+// The Aniimo a Bench or Kiln worked by hand needs in the shown plan: the plan's own, or if it
+// has none there (a unit only the switching schedule uses), the ability its recipes take at the
+// level the Aniimo setup gives it, with the facility's personality under Best.
+function handAniimoFor(facility, plan) {
+    const step = (plan.coin_items || []).find(s => s.facility === facility && s.status === 'producing' && !s.is_emode && s.aniimo);
+    if (step) return step.aniimo;
+    const needs = recipeIndex.filter(r => r.facility === facility && r.aniimo);
+    if (!needs.length) return null;
+    const ability = needs[0].aniimo[0];
+    const least = Math.max(...needs.map(r => r.aniimo[1]));
+    const minimum = selectedSetupTab() === 'minimum';
+    return {
+        ability,
+        level: minimum ? least : Math.max(least, bestAniimoLevel(ability)),
+        personality_bonus: !minimum && !!FACILITIES.find(f => f.name === facility)?.personality,
+    };
+}
+
+// When the player switches Benches and Kilns by hand, the units the switching schedule works by
+// hand beyond those the plan's own rows staff, as plan rows of their own for the Aniimo team: one
+// each, busy for the share of the schedule it's making something. Empty otherwise.
+function scheduledHandSteps(plan) {
+    if (!lastPlanInput?.rotate_tiers || !plan.level_up || selectedSetupTab() === 'custom') return [];
+    const steps = [];
+    for (const facility of ['Woodworking Bench', 'Chimney Kiln']) {
+        const schedule = dailySchedule(facility, plan);
+        if (!schedule?.hours) continue;
+        const staffed = planUnits(plan, false)[facility] || 0;
+        const aniimo = handAniimoFor(facility, plan);
+        if (!aniimo) continue;
+        schedule.units.filter(unit => !unit.electric).slice(staffed).forEach(unit => {
+            const working = unit.days.filter(d => d.item && !d.after);
+            const busy = Math.min(1, working.reduce((sum, d) => sum + Math.min(d.to, schedule.hours) - d.from, 0) / schedule.hours);
+            if (busy <= 0) return;
+            steps.push({
+                facility, facility_count: 1, item_name: working[0].item, status: 'producing', is_emode: false, aniimo,
+                aniimo_tasks: [{ ability: aniimo.ability, level: aniimo.level, personality_bonus: aniimo.personality_bonus, busy, jobs: [] }],
+            });
+        });
+    }
+    return steps;
+}
+
+// The plan's rows that make Aniimo work, with those of the Benches and Kilns only the switching
+// schedule uses.
+const teamSteps = plan => [...(plan.coin_items || []), ...scheduledHandSteps(plan)];
+
 const unitNumbers = numbers => (numbers.length > 1 ? `#${numbers[0]}–#${numbers[numbers.length - 1]}` : `#${numbers[0]}`);
 
 // The Benches and Kilns the player switches by hand, as rows like the plan's own (see
@@ -4600,7 +4647,7 @@ function scheduledRows(plan, steps) {
             if (!schedule) continue;
             facilities.add(facility);
             const mine = steps.filter(s => s.facility === facility && s.status === 'producing');
-            const aniimo = mine.find(s => !s.is_emode && s.aniimo)?.aniimo || null;
+            const aniimo = handAniimoFor(facility, plan);
             // What a tier is for, from the plan's row for it, without the turns it takes.
             const usesOf = item => (mine.find(s => s.item_name === item)?.reason || '').split(';')[0];
             const { fixed, switching } = scheduleGroups(schedule);
@@ -4637,10 +4684,7 @@ function rotationSection(plan) {
     const span = (from, to) => (every === 24
         ? (to - from <= 24 ? `<span>Day ${from / 24 + 1}</span>` : `<span>Days ${from / 24 + 1}–${to / 24}</span>`)
         : `${at(from)}–${at(to)}`);
-    const aniimoOf = (facility, electric) => {
-        const step = (plan.coin_items || []).find(s => s.facility === facility && s.status === 'producing' && !s.is_emode && s.aniimo);
-        return aniimoLabel({ facility, is_emode: electric, status: 'producing', aniimo: electric ? null : step?.aniimo });
-    };
+    const aniimoOf = (facility, electric) => aniimoLabel({ facility, is_emode: electric, status: 'producing', aniimo: electric ? null : handAniimoFor(facility, plan) });
     const row = (facility, when, producing, aniimo, why) => `
                     <tr class="status-producing">
                         <td data-label="Facility">${facility}</td>
@@ -4753,12 +4797,17 @@ function workOutDailySchedule(facility, plan, input, every) {
     if (!target || !tiers.length) return null;
     const owned = tierCount(input.facilities[facility]);
     const electricCount = Math.min(owned, planEmodeCounts(plan)[facility] || 0);
+    // Every unit not on electricity is worked by an Aniimo, so the level-up's tiers get every unit
+    // there is and need the fewest switches; one the plan's own rows leave idle still gets an
+    // Aniimo on the team (see `scheduledHandSteps`).
+    const manualCount = owned - electricCount;
     const timeOf = (item, electric) => (plan.level_up_times || []).find(([name, e]) => name === item && e === electric)?.[2]
         ?? (plan.level_up_times || []).find(([name]) => name === item)?.[2];
     const kinds = [
         { electric: true, count: electricCount },
-        { electric: false, count: owned - electricCount },
+        { electric: false, count: manualCount },
     ].filter(kind => kind.count > 0);
+    if (!kinds.length) return null;
     const perHour = kinds.map(kind => tiers.map(item => 3600 / (timeOf(item, kind.electric) || Infinity)));
     const amounts = tiers.map(item => recipeIndex.find(r => r.name === item)?.amounts?.[0] || 1);
     const raw = chain[0];
