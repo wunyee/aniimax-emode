@@ -2806,6 +2806,67 @@ fn pool_grower_units(
     units
 }
 
+/// Gives each season crop at least the plots the player asks for (see
+/// [`crate::models::SeasonTerms::min_plots`]) in `units`, from `pool_grower_units`. The crop
+/// takes idle units first, then units of the other items there, the one that sells for the least
+/// per second first. The crop's variants count toward its minimum.
+fn keep_season_minimums(
+    items: &[ProductionItem],
+    facility_counts: &FacilityCounts,
+    units: &mut std::collections::BTreeMap<(String, String), u32>,
+) {
+    use crate::models::base_item_name;
+    let mut minimums: Vec<(&ProductionItem, u32)> = items
+        .iter()
+        .filter(|item| item.name == base_item_name(&item.name))
+        .filter_map(|item| item.season.filter(|s| s.min_plots > 0).map(|s| (item, s.min_plots)))
+        .collect();
+    minimums.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+    let kept: HashSet<&str> = minimums.iter().map(|(item, _)| item.name.as_str()).collect();
+    let item_map: HashMap<&str, &ProductionItem> = items.iter().map(|i| (i.name.as_str(), i)).collect();
+    let sells_for = |name: &str| {
+        item_map.get(name).map_or(0.0, |item| item.sell_value * item.yield_amount as f64 / item.production_time)
+    };
+    for (crop, min) in minimums {
+        let facility = crop.facility.as_str();
+        let growing: u32 = units
+            .iter()
+            .filter(|((f, name), _)| f == facility && base_item_name(name) == crop.name)
+            .map(|(_, count)| count)
+            .sum();
+        let mut needed = min.saturating_sub(growing);
+        if needed == 0 {
+            continue;
+        }
+        let used: u32 = units.iter().filter(|((f, _), _)| f == facility).map(|(_, count)| count).sum();
+        let idle = facility_counts.get_count(facility).saturating_sub(used).min(needed);
+        let mut taken = idle;
+        needed -= idle;
+        // Never from another season crop's minimum.
+        let mut others: Vec<(String, u32)> = units
+            .iter()
+            .filter(|((f, name), count)| f == facility && **count > 0 && !kept.contains(base_item_name(name)))
+            .map(|((_, name), &count)| (name.clone(), count))
+            .collect();
+        others.sort_by(|a, b| {
+            sells_for(&a.0).partial_cmp(&sells_for(&b.0)).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0))
+        });
+        for (name, count) in others {
+            if needed == 0 {
+                break;
+            }
+            let give = count.min(needed);
+            needed -= give;
+            taken += give;
+            if let Some(left) = units.get_mut(&(facility.to_string(), name)) {
+                *left -= give;
+            }
+        }
+        *units.entry((facility.to_string(), crop.name.clone())).or_default() += taken;
+    }
+    units.retain(|_, count| *count > 0);
+}
+
 /// Re-solves every rate within the plan's whole units. The continuous solve and its rounding
 /// decide how many units of each gatherer produce each item and which processor units run which
 /// recipe; but a unit rounded up (or shared by two chains) produces its full output, not the
@@ -4042,8 +4103,9 @@ pub fn find_production_plan_with_progress(
         ),
         facility_counts,
     );
-    let grower_units =
+    let mut grower_units =
         pool_grower_units(items, &effs, facility_counts, &item_map, &grower_assignment, &environment_assignment);
+    keep_season_minimums(items, facility_counts, &mut grower_units);
     let final_rates = fill_whole_units(items, &item_map, &effs, facility_counts, &grower_units, &processor_units);
     trial_count += 1;
     report_progress(trial_count, on_progress);

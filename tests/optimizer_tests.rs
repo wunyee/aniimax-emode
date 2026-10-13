@@ -1283,3 +1283,45 @@ fn test_prioritize_byproducts_with_best_aniimo_still_finds_a_plan() {
         .expect("prioritizing byproducts should never remove a feasible plan");
     assert!(prioritized.rate_per_second <= normal.rate_per_second + 1e-9);
 }
+
+// The backup planner keeps the season crop minimums too. With the crops worth almost nothing, a
+// plan grows none of them until 2 Moondew Radish and 3 Waxing Moon Pepper plots are asked for out
+// of 6. Then it grows exactly those, and the last plot grows what it grew before.
+#[test]
+fn test_season_min_plots_keeps_crops_growing() {
+    let data_dir = Path::new("data");
+    if !data_dir.exists() {
+        return;
+    }
+    let mut items = load_all_data(data_dir).expect("Failed to load data");
+    let text = std::fs::read_to_string(data_dir.join("harvest_moon_festival.csv")).expect("season data");
+    let mut season = aniimax::data::parse_season(&text).expect("season parses");
+    aniimax::models::apply_watering(&mut season);
+    for item in season.iter_mut().filter(|i| i.name == "moondew_radish" || i.name == "waxing_moon_pepper") {
+        item.sell_value = 1.0;
+    }
+    items.extend(season);
+    let counts = FacilityCounts::only(&[("Farmland", 6, 2)]);
+    let modules = default_module_levels();
+
+    let free = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan");
+    assert_eq!(count_of(&free, "Farmland", "moondew_radish") + count_of(&free, "Farmland", "waxing_moon_pepper"), 0);
+
+    for item in &mut items {
+        let min = match item.name.as_str() {
+            "moondew_radish" => 2,
+            "waxing_moon_pepper" => 3,
+            _ => continue,
+        };
+        item.season.as_mut().unwrap().min_plots = min;
+    }
+    let plan = find_production_plan(&items, "coins", &counts, &modules, false).expect("plan");
+    assert_eq!(count_of(&plan, "Farmland", "moondew_radish"), 2, "{:?}", plan.coin_items);
+    assert_eq!(count_of(&plan, "Farmland", "waxing_moon_pepper"), 3, "{:?}", plan.coin_items);
+    let other: u32 = steps_at(&plan, "Farmland")
+        .iter()
+        .filter(|s| s.status == PlanStepStatus::Producing && !s.item_name.as_deref().is_some_and(|n| n.starts_with("moondew") || n.starts_with("waxing")))
+        .map(|s| s.facility_count)
+        .sum();
+    assert_eq!(other, 1, "{:?}", plan.coin_items);
+}

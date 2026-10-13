@@ -365,10 +365,7 @@ fn test_exact_season_min_plots_keeps_crops_growing() {
         };
         item.season.as_mut().unwrap().min_plots = min;
     }
-    // Not `solve_and_check`: the heuristic planner doesn't keep the minimum, so it earns more.
-    let plan = solve_exact(&items, "coins", &counts, &modules, Goal::Earn { floors: &[] }, None, None).unwrap();
-    assert!(plan.proven_optimal);
-    check_plan(&plan, &items, "coins", &counts, &modules, None).expect("plan passes its re-check");
+    let plan = solve_and_check(&items, &counts, &modules);
     assert!((plots(&plan, "moondew_radish") - 2.0).abs() < 1e-9, "{} radish plots", plots(&plan, "moondew_radish"));
     assert!((plots(&plan, "waxing_moon_pepper") - 3.0).abs() < 1e-9, "{} pepper plots", plots(&plan, "waxing_moon_pepper"));
 
