@@ -147,6 +147,14 @@ async function exactPlanJson(pkg, payload, step = () => {}, first = () => {}) {
     step('final', 'start');
     const alone = stage.floors.length === 0 && !stage.pace;
     let solved = await solveModel(problem);
+    // Kept to a level-up's pace, the solver can find nothing right at the edge of it (seen at RV 15
+    // with a little Rough Lumber in stock): once more with a hair more slack, as for a priority.
+    if (!solved && stage.pace) {
+        stage.pace *= 1 - 1e-3;
+        stageJson = JSON.stringify(stage);
+        problem = JSON.parse(exact_problem(payload, stageJson));
+        solved = await solveModel(problem);
+    }
     if (!solved) throw new Error('the solver found no plan');
     if (alone) first({ measure: 'coins', objective: solved.objective, proven: solved.proven });
     let proven = solved.proven && allProven;
