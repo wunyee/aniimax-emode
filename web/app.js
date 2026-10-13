@@ -1647,9 +1647,6 @@ const initialsOf = name => {
 
 let layoutRunId = 0;
 let layoutWorker = null;
-// Each plan's layouts by RV level, worked out once: showing the plan again (another Aniimo setup
-// and back) draws the one it already has.
-const layoutCache = new WeakMap();
 
 // Every plot of the homeland, `{ number, x, y, w, h }` in tiles, with the top left at the origin.
 function homelandPlots() {
@@ -1734,20 +1731,12 @@ function renderHomelandLayout(plan) {
         drawLayout(lastLayout);
         setStep('layout', 'done');
     };
-    if (!layoutCache.has(plan)) layoutCache.set(plan, new Map());
-    const cached = layoutCache.get(plan);
     if (layoutWorker) layoutWorker.terminate();
-    layoutWorker = null;
-    if (cached.has(homeLevel)) {
-        show(cached.get(homeLevel));
-        return;
-    }
     layoutWorker = new Worker(WORKER_URL.replace('worker.js', 'layout-worker.js'), { type: 'module' });
     layoutWorker.onmessage = (event) => {
         layoutWorker.terminate();
         layoutWorker = null;
         if (runId !== layoutRunId) return;
-        cached.set(homeLevel, event.data);
         show(event.data);
     };
     layoutWorker.onerror = (event) => {
@@ -5467,23 +5456,14 @@ function displayGoal(goalResult) {
     renderSeedsNeeded(goalResult);
 }
 
-// The last few calculations, by everything they were worked out from (see `runFindPlan`): asking
-// for one of them again, such as the generator at 100% after trying 120%, shows what it found at
-// once, with its Minimum team plan, layout, lineup and opportunities, instead of solving again.
-// Any change to the input is a calculation of its own, so nothing here goes stale; it lives only as
-// long as the page, and holds `RUN_CACHE_SIZE` calculations, the least recently shown going first.
-const runCache = new Map();
-const RUN_CACHE_SIZE = 8;
-
 // The Minimum team plan for `input`, into `plans` (a calculation's plans, see `plansBySetup`),
-// shown if the player has it picked and the calculation is still the one on screen. Kept even if
-// a newer calculation has started by then, so a cached one has it.
+// shown if the player has it picked and the calculation is still the one on screen.
 function solveMinimum(input, plans, runId) {
     setStep('minimum', 'start');
     callWorker('find_plan', JSON.stringify({ ...input, aniimo: 'minimum' }))
         .then(json => {
-            plans.minimum = JSON.parse(json);
             if (runId !== planRunId) return;
+            plans.minimum = JSON.parse(json);
             setStep('minimum', 'done');
             if (selectedAniimoSetup() === 'minimum') showSelectedPlan();
         })
@@ -5559,31 +5539,6 @@ async function runFindPlan() {
         // Whichever Best the player has asked for; the other one waits until they switch to it.
         const bestSetup = selectedAniimoSetup() === 'minimum' ? bestAniimoSetup() : selectedAniimoSetup();
         Object.assign(input, aniimoInput(bestSetup));
-
-        // Worked out before with exactly this? Then that's the answer, at once.
-        const runKey = JSON.stringify([input, bestSetup]);
-        const saved = runCache.get(runKey);
-        if (saved) {
-            runCache.delete(runKey);
-            runCache.set(runKey, saved);
-            lastPlanInput = saved.input;
-            plansBySetup = saved.plans;
-            rankingsBySetup = saved.rankings;
-            if (progress) {
-                progress.steps.forEach(step => {
-                    if (step.key === 'plan' || step.key.startsWith('priority:')) {
-                        step.state = 'done';
-                        step.detail = 'saved';
-                    }
-                });
-                renderProgress();
-            }
-            showSelectedPlan();
-            updatePowerGauge(saved.input.emode_facility_counts);
-            if (saved.plans.minimum) setStep('minimum', 'done', 'saved');
-            else solveMinimum(saved.input, saved.plans, runId);
-            return;
-        }
         let bestJson = await callWorker('find_plan', JSON.stringify({ ...input, aniimo: bestSetup }), (count) => {
             // The exact planner reports each solve; the backup planner counts its trials.
             if (typeof count === 'object') {
@@ -5673,10 +5628,6 @@ async function runFindPlan() {
 
         finishSolveSteps();
         plansBySetup[bestSetup] = bestPlan;
-        if (bestPlan.success) {
-            runCache.set(runKey, { input, plans: plansBySetup, rankings: rankingsBySetup });
-            while (runCache.size > RUN_CACHE_SIZE) runCache.delete(runCache.keys().next().value);
-        }
         showSelectedPlan();
         updatePowerGauge(input.emode_facility_counts);
         // With no plan there's nothing to lay out or improve on.
