@@ -2465,6 +2465,15 @@ function seasonMinPlots() {
     return minimums;
 }
 
+// The season currency a day the seeds for `minimums` take (see `seasonMinPlots`): each plot
+// plants again every time its crop is ready.
+function minPlotsWheatPerDay(minimums) {
+    return Object.entries(minimums).reduce((sum, [crop, plots]) => {
+        const recipe = recipeIndex.find(r => r.name === crop && r.seasonSeedCost > 0 && r.growTime > 0);
+        return recipe ? sum + plots * 86400 / recipe.growTime * recipe.seasonSeedCost : sum;
+    }, 0);
+}
+
 function seasonAvailable() {
     return !isSimpleMode() || selectedHomeLevel() >= SEASON.minHomeLevel;
 }
@@ -2559,7 +2568,7 @@ async function loadAniimoDex() {
 async function loadRecipeIndex() {
     try {
         recipeIndex = JSON.parse(await callWorker('get_all_items'))
-            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none', currency: r.sell_currency || 'coins', aniimo: r.aniimo || null }))
+            .map(r => ({ name: r.name, facility: r.facility, cost: r.cost || 0, seasonSeedCost: r.season_seed_cost || 0, growTime: r.production_time || 0, environment: r.environment || null, jobs: r.jobs || [], ingredients: r.raw_materials || [], amounts: r.required_amount || [], yieldAmount: r.yield_amount || 1, byproduct: r.byproduct_item || null, byproductAmount: r.byproduct?.[1] || 0, levelUpMaterial: r.sell_currency === 'none', currency: r.sell_currency || 'coins', aniimo: r.aniimo || null }))
             .sort((a, b) => a.facility.localeCompare(b.facility) || a.name.localeCompare(b.name));
         renderRecipeOptions();
         renderSkippedRecipes();
@@ -5514,6 +5523,11 @@ async function runFindPlan() {
         if (wanted > farmland) {
             throw new Error(translate(`Season crops to keep growing take {wanted} Farmland plots, but you have {farmland}.`)
                 .replace('{wanted}', wanted).replace('{farmland}', farmland));
+        }
+        const wheat = minPlotsWheatPerDay(input.season_min_plots);
+        if (input.season_currency_per_day !== null && wheat > input.season_currency_per_day * (1 + 1e-9)) {
+            throw new Error(translate(`Season crops to keep growing take {wheat} ${SEASON.currency} a day for seeds, but you can spend {budget}.`)
+                .replace('{wheat}', formatNumber(Math.ceil(wheat))).replace('{budget}', formatNumber(input.season_currency_per_day)));
         }
         lastPlanInput = input;
         planContext = {

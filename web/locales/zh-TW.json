@@ -1002,6 +1002,7 @@
   "Season crops to keep growing": "固定種植的季節作物",
   "The fewest Farmland plots to keep growing each season crop, e.g. to find its variants for season quests. Plans grow at least this many, even when something else would earn more.": "每種季節作物至少要持續種植的農田地塊數，例如為了收集活動任務需要的變異作物。即使種別的作物更賺錢，計畫也會至少種這麼多塊。",
   "Season crops to keep growing take {wanted} Farmland plots, but you have {farmland}.": "固定種植的季節作物需要 {wanted} 塊農田，但你只有 {farmland} 塊。",
+  "Season crops to keep growing take {wheat} Moonray Wheat a day for seeds, but you can spend {budget}.": "固定種植的季節作物每天需要 {wheat} 月芒穗購買種子，但你每天只能花 {budget}。",
   "stays at its post": "專職，不離開崗位",
   "steps away {n}% of the day and makes that much less there": "每天離開崗位 {n}%，該設施產量也少這麼多",
   "no Aniimo in the handbook has this within your levels": "圖鑑中沒有在你設定的等級內能做這項工作的伊莫",
