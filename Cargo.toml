@@ -1,6 +1,6 @@
 [package]
 name = "aniimax"
-version = "0.18.3"
+version = "0.18.4"
 edition = "2021"
 description = "Production path optimizer for Aniimo Homeland"
 repository = "https://github.com/wunyee/aniimax-emode"
