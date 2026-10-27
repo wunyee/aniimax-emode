@@ -353,7 +353,7 @@ fn test_aniimo_homeland_dex() {
 
     let emberpup_highland = form(1005101);
     assert_eq!((emberpup_highland.number, emberpup_highland.name.as_str()), (1, "Emberpup"));
-    assert_eq!(emberpup_highland.form_zh_tw, "高山型態");
+    assert_eq!(emberpup_highland.form_zh_tw, "高地型態");
     assert_eq!(levels(1005101), [("Earth", 1), ("Fire", 1), ("Hauling", 1)]);
     assert_eq!(levels(1020302), [("Artisanship", 4), ("Dark", 4), ("Grass", 3)]);
     assert!(dex.iter().all(|f| !f.abilities.is_empty()), "every form has an ability");

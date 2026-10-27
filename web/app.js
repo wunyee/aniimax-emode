@@ -3653,7 +3653,7 @@ function teamDot(ability, text, bonus, tip) {
     return `<span class="ability-dot small${a && a.dark ? ' dark' : ''}${bonus ? ' bonus' : ''}" style="--ability:${a ? a.color : '#888888'}" title="${tip}" aria-label="${tip}">${text}</span>`;
 }
 
-// A form's name as the game shows it in the current language: "小炭狗(高山型態)", "Emberpup
+// A form's name as the game shows it in the current language: "小炭狗(高地型態)", "Emberpup
 // (Highland Form)".
 function dexName(form) {
     return currentLocale() === 'zh-TW'
