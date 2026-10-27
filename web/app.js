@@ -249,7 +249,9 @@ export const EMODE_PRIORITY = [
     'Woodworking Bench',
     'Claw Game Cooker',
     'Dance Pad Polisher',
-    'Aniipod Maker'
+    'Aniipod Maker',
+    'Mine',
+    'Well'
 ];
 
 export function getGeneratorCapacity() {
