@@ -63,10 +63,11 @@
                                     <label for="simple-generator-capacity">Generator</label>
                                     <select id="simple-generator-capacity">
                                         <option value="600">600W (Lv.1: RV 12–13)</option>
-                                        <option value="800">800W (Lv.2: RV 14–15)</option>
-                                        <option value="1000">1000W (Lv.3: RV 16–17)</option>
-                                        <option value="1200">1200W (Lv.4: RV 18–19)</option>
-                                        <option value="1500">1500W (Lv.5: RV 20)</option>
+                                        <option value="800">800W (Lv.2: RV 14)</option>
+                                        <option value="1600">1600W (Lv.2 ×2: RV 15)</option>
+                                        <option value="2000">2000W (Lv.3 ×2: RV 16–17)</option>
+                                        <option value="3600">3600W (Lv.4 ×3: RV 18–19)</option>
+                                        <option value="4500">4500W (Lv.5 ×3: RV 20)</option>
                                     </select>
                                 </div>
                                 <div class="input-field emode-simple-rate" id="emode-simple-rate-field">
@@ -86,7 +87,7 @@
                                     <div class="power-gauge-fill" id="simple-power-gauge-fill" style="width: 100%;"></div>
                                 </div>
                             </div>
-                            <p class="hint small" id="emode-simple-hint">Each electric facility runs on the generator where that's no slower than its Aniimo; watts left over then go to units worked by hand, as long as the plan doesn't slow down. Units on electricity need no Aniimo; the Crackle Generator needs one Lightning Aniimo.</p>
+                            <p class="hint small" id="emode-simple-hint">Each electric facility runs on the generators where that's no slower than its Aniimo; watts left over then go to units worked by hand, as long as the plan doesn't slow down. Units on electricity need no Aniimo; each Crackle Generator the plan runs needs one Lightning Aniimo.</p>
                         </div>
                     </div>
                     <p class="hint">Assumes you've built and upgraded everything your RV level allows.</p>
@@ -149,7 +150,7 @@
                     </div>
 
                     <div class="emode-section">
-                        <h3>Electric Mode (E-mode) <span class="info-icon" data-tooltip="Unlocked at RV 12. Electrified facilities operate automatically using power and do not require Aniimo workers. Crackle Generator can be upgraded from 600W (Lv.1) up to 1500W (Lv.5). Actual production time = Base E-mode Time / (Power Supply Rate %).">?</span></h3>
+                        <h3>Electric Mode (E-mode) <span class="info-icon" data-tooltip="Unlocked at RV 12. Electrified facilities operate automatically using power and do not require Aniimo workers. Each Crackle Generator gives 600W (Lv.1) up to 1500W (Lv.5); RV 15 allows two and RV 18 three, all powering the same grid. Actual production time = Base E-mode Time / (Power Supply Rate %).">?</span></h3>
                         <p class="hint">Electrify processing facilities. Electrified units run automatically without needing Aniimo workers.</p>
                         <div class="power-gauge-container" id="advanced-power-gauge-container">
                             <div class="power-gauge-header">
@@ -165,10 +166,11 @@
                                 <label for="generator-capacity">Generator</label>
                                 <select id="generator-capacity">
                                     <option value="600">600W (Lv.1: RV 12–13)</option>
-                                    <option value="800">800W (Lv.2: RV 14–15)</option>
-                                    <option value="1000">1000W (Lv.3: RV 16–17)</option>
-                                    <option value="1200">1200W (Lv.4: RV 18–19)</option>
-                                    <option value="1500">1500W (Lv.5: RV 20)</option>
+                                    <option value="800">800W (Lv.2: RV 14)</option>
+                                    <option value="1600">1600W (Lv.2 ×2: RV 15)</option>
+                                    <option value="2000">2000W (Lv.3 ×2: RV 16–17)</option>
+                                    <option value="3600">3600W (Lv.4 ×3: RV 18–19)</option>
+                                    <option value="4500">4500W (Lv.5 ×3: RV 20)</option>
                                 </select>
                             </div>
                             <div class="input-field emode-rate-field">

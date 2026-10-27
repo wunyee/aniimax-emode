@@ -208,24 +208,30 @@ export function facilityWatts(name, level) {
 
 export const DEFAULT_GENERATOR_WATTS = 600;
 
+// The Crackle Generators' watts all together at each RV: as many generators as the RV allows (one
+// up to RV 14, two from RV 15, three from RV 18, in the game's home_object_place_data), each at
+// the highest level it allows (the Power Module unlocks generator Lv.1–5 at RV 12, 14, 16, 18 and
+// 20, in home_car_component_upgrade_data). They all power the same grid.
 export const GENERATOR_WATTS_BY_HOME_LEVEL = {
     12: 600,
     13: 600,
     14: 800,
-    15: 800,
-    16: 1000,
-    17: 1000,
-    18: 1200,
-    19: 1200,
-    20: 1500,
+    15: 1600,
+    16: 2000,
+    17: 2000,
+    18: 3600,
+    19: 3600,
+    20: 4500,
 };
 
+// The generator setups to pick from: `watts` all together, `count` generators at `level`.
 export const GENERATOR_CAPACITY_OPTIONS = [
-    { watts: 600, level: 1, minHomeLevel: 12, label: '600W (Lv.1: RV 12–13)' },
-    { watts: 800, level: 2, minHomeLevel: 14, label: '800W (Lv.2: RV 14–15)' },
-    { watts: 1000, level: 3, minHomeLevel: 16, label: '1000W (Lv.3: RV 16–17)' },
-    { watts: 1200, level: 4, minHomeLevel: 18, label: '1200W (Lv.4: RV 18–19)' },
-    { watts: 1500, level: 5, minHomeLevel: 20, label: '1500W (Lv.5: RV 20)' },
+    { watts: 600, level: 1, count: 1, minHomeLevel: 12, label: '600W (Lv.1: RV 12–13)' },
+    { watts: 800, level: 2, count: 1, minHomeLevel: 14, label: '800W (Lv.2: RV 14)' },
+    { watts: 1600, level: 2, count: 2, minHomeLevel: 15, label: '1600W (Lv.2 ×2: RV 15)' },
+    { watts: 2000, level: 3, count: 2, minHomeLevel: 16, label: '2000W (Lv.3 ×2: RV 16–17)' },
+    { watts: 3600, level: 4, count: 3, minHomeLevel: 18, label: '3600W (Lv.4 ×3: RV 18–19)' },
+    { watts: 4500, level: 5, count: 3, minHomeLevel: 20, label: '4500W (Lv.5 ×3: RV 20)' },
 ];
 
 

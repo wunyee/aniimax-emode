@@ -263,6 +263,8 @@ function unitWatts(name) {
     return facilityWatts(name, Math.max(1, ...(owned.length ? owned : tiers).map(t => t.level)));
 }
 
+// The Crackle Generators' watts all together, as picked (see `GENERATOR_CAPACITY_OPTIONS`), or
+// the most the RV allows.
 export function getGeneratorCapacity() {
     if (isSimpleMode()) {
         const homeLevel = selectedHomeLevel();
@@ -274,6 +276,19 @@ export function getGeneratorCapacity() {
     const el = document.getElementById('generator-capacity');
     const val = el ? parseInt(el.value, 10) : 0;
     return !isNaN(val) && val > 0 ? val : DEFAULT_GENERATOR_WATTS;
+}
+
+// The generator setup picked: `{ watts, level, count }`, `watts` all together.
+function generatorSetup(watts = getGeneratorCapacity()) {
+    return GENERATOR_CAPACITY_OPTIONS.find(option => option.watts === watts) || { watts, level: 1, count: 1 };
+}
+
+// How many generators a plan drawing `watts` keeps running: as few as give that much within the
+// supply rate's cap, at least one, at most as many as there are.
+function generatorsInUse(watts) {
+    const { count, watts: all } = generatorSetup();
+    const each = getTargetEmodeWatts(all / count);
+    return Math.min(count, Math.max(1, Math.ceil(watts / each - 1e-9)));
 }
 
 export function getTargetEmodeWatts(generatorCapacity = getGeneratorCapacity(), powerRate = getPowerGridRate()) {
@@ -684,8 +699,8 @@ function attachEmodeHandlers() {
 }
 
 // Simple mode's E-mode switch: off and locked below RV 12, where there's no generator, and back to
-// what the player had it at above; the generator, supply rate and power bar show only while it's
-// on.
+// what the player had it at above; the generators, supply rate and power bar show only while it's
+// on. The generators go to the most the RV allows.
 function updateSimpleEmodeState() {
     const homeLevel = selectedHomeLevel();
     const toggle = document.getElementById('emode-simple-on');
@@ -1614,12 +1629,15 @@ function homelandPieces(plan, input) {
         }
     });
 
-    // The Crackle Generator, when anything runs on it: placed first, with the units on it around
-    // it (see `POWER_PENALTY` in layout.js); its poles come after (see `placePower`).
+    // The Crackle Generators the plan keeps running (see `planGenerators`), when anything runs on
+    // them: placed first, with the units on them around (see `POWER_PENALTY` in layout.js); their
+    // poles come after (see `placePower`).
     const electric = steps.filter(step => step.is_emode && step.status === 'producing');
     if (electric.length) {
-        pieces.push({ members: [{ x: 0, y: 0, w: 2, h: 2, weight: 0, facility: 'Crackle Generator', generator: true, sensitive: false }] });
-        // About as many poles as the units' ground needs past what the generator's range holds
+        for (let g = planGenerators(electric); g > 0; g--) {
+            pieces.push({ members: [{ x: 0, y: 0, w: 2, h: 2, weight: 0, facility: 'Crackle Generator', generator: true, sensitive: false }] });
+        }
+        // About as many poles as the units' ground needs past what one generator's range holds
         // (a unit only has to touch it, so some reach past), and one to spare; the layout takes
         // back any it didn't need (see `placePower`).
         const footprintArea = facility => (FACILITY_FOOTPRINTS[facility] || [2, 2]).reduce((a, b) => a * b, 1);
@@ -1855,35 +1873,33 @@ function homelandSvg(layout, homeLevel) {
         <text x="${s.x + s.w / 2}" y="${s.y + s.h / 2}" font-size="0.8" class="layout-storage-text">SU</text></g>
         ${(() => {
             const members = layout.pieces.flatMap(p => p.members);
-            const genPiece = members.find(m => m.facility === 'Crackle Generator' || m.facility === 'Generator' || m.generator);
+            const generators = members.filter(m => m.facility === 'Crackle Generator' || m.facility === 'Generator' || m.generator);
             const poles = members.filter(m => m.facility === 'Crackle Power Pole' || m.facility === 'Power Pole' || m.powerPole);
 
             let aura = '';
-            if (genPiece) {
-                // 11x11 square range for Crackle Generator (official Aniimo mechanics)
-                const gx = genPiece.x - (11 - genPiece.w) / 2;
-                const gy = genPiece.y - (11 - genPiece.h) / 2;
-                const genCenter = { x: genPiece.x + genPiece.w / 2, y: genPiece.y + genPiece.h / 2 };
-
-                aura += `<g class="generator-power-network" pointer-events="none">
-                    <!-- Crackle Generator 11x11 Square Grid -->
-                    <rect x="${gx}" y="${gy}" width="11" height="11" rx="0.3"
+            if (generators.length) {
+                const centerOf = m => ({ x: m.x + m.w / 2, y: m.y + m.h / 2 });
+                aura += `<g class="generator-power-network" pointer-events="none">`;
+                // Each Crackle Generator's 11x11 square range.
+                generators.forEach(g => {
+                    aura += `
+                    <rect x="${g.x - (11 - g.w) / 2}" y="${g.y - (11 - g.h) / 2}" width="11" height="11" rx="0.3"
                         fill="#06b6d4" fill-opacity="0.06" stroke="#06b6d4" stroke-opacity="0.6" stroke-width="0.16" stroke-dasharray="0.8 0.4" />`;
-
-                let lastNode = genCenter;
-                poles.forEach((pole, idx) => {
+                });
+                // Each pole's 7x7 relay range, wired to the nearest generator or pole before it.
+                const nodes = generators.map(centerOf);
+                poles.forEach(pole => {
                     const px = pole.x - (7 - pole.w) / 2;
                     const py = pole.y - (7 - pole.h) / 2;
-                    const pCenter = { x: pole.x + pole.w / 2, y: pole.y + pole.h / 2 };
+                    const pCenter = centerOf(pole);
+                    const from = nodes.reduce((a, b) => (Math.hypot(b.x - pCenter.x, b.y - pCenter.y) < Math.hypot(a.x - pCenter.x, a.y - pCenter.y) ? b : a));
+                    nodes.push(pCenter);
                     aura += `
-                        <!-- Power Pole #${idx + 1} 7x7 Relay Range -->
                         <rect x="${px}" y="${py}" width="7" height="7" rx="0.25"
                             fill="#eab308" fill-opacity="0.04" stroke="#eab308" stroke-opacity="0.5" stroke-width="0.12" stroke-dasharray="0.5 0.25" />
-                        <!-- Power Transmission Cable -->
-                        <line x1="${lastNode.x}" y1="${lastNode.y}" x2="${pCenter.x}" y2="${pCenter.y}"
+                        <line x1="${from.x}" y1="${from.y}" x2="${pCenter.x}" y2="${pCenter.y}"
                             stroke="#06b6d4" stroke-width="0.14" stroke-dasharray="0.4 0.2" stroke-opacity="0.75" />
                     `;
-                    lastNode = pCenter;
                 });
                 aura += `</g>`;
             }
@@ -3496,7 +3512,7 @@ const GENERATOR_ABILITY = 'Lightning';
 // The Lightning level the Crackle Generator's Aniimo needs: the generator's own level, up to 3
 // (a level-1 generator takes Lightning 1, level 2 takes 2, level 3 and up take 3).
 function generatorAniimoLevel(watts = getGeneratorCapacity()) {
-    const level = GENERATOR_CAPACITY_OPTIONS.find(option => option.watts === watts)?.level ?? 1;
+    const level = generatorSetup(watts).level;
     return Math.min(3, level);
 }
 
@@ -3961,8 +3977,10 @@ function renderAniimoSummary(plan) {
         needsAniimo(building, units, `${building} (${modes[0]})`);
         needsAniimo(partner, units, `${partner} (${modes[1]})`);
     });
-    if ((plan.coin_items || []).some(step => step.is_emode && step.status === 'producing')) {
-        needsAniimo('Crackle Generator', 1, 'Crackle Generator');
+    // One for each generator the plan keeps running (see `generatorsInUse`).
+    const electricRows = (plan.coin_items || []).filter(step => step.is_emode && step.status === 'producing');
+    if (electricRows.length) {
+        needsAniimo('Crackle Generator', planGenerators(electricRows), 'Crackle Generator');
     }
     const collapsedSummary = document.getElementById('aniimo-collapsed-summary');
     if (groups.size === 0) {
@@ -4438,13 +4456,14 @@ const POWER_FACILITY_PALETTE = ['#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#60
     '#e879f9', '#a3e635', '#f87171', '#38bdf8', '#fde047', '#c084fc', '#4ade80'];
 const powerFacilityColor = name => POWER_FACILITY_PALETTE[Math.max(0, EMODE_PRIORITY.indexOf(name)) % POWER_FACILITY_PALETTE.length];
 
-// Places `units` (`{ facility, w, h, label }`, biggest first) around a generator whose range is
-// (0,0)-(11,11), with up to `maxPoles` poles: `{ generator, ranges, poles, placed, unplaced }`.
-// Works on a quarter-tile grid, as facilities snap to quarter tiles.
-function planPowerLayout(units, maxPoles) {
+// Places `units` (`{ facility, w, h, label }`, biggest first) around `generators` generators, the
+// first with its range at (0,0)-(11,11) and each other where its range adds the most ground, with
+// up to `maxPoles` poles: `{ generators, ranges, poles, placed, unplaced }`. Works on a
+// quarter-tile grid, as facilities snap to quarter tiles.
+function planPowerLayout(units, maxPoles, generators = 1) {
     const Q = 4;
-    const MIN = -24;
-    const MAX = 35;
+    const MIN = -24 * generators;
+    const MAX = 35 + 24 * (generators - 1);
     const N = (MAX - MIN) * Q;
     const powered = new Uint8Array(N * N);
     const used = new Uint8Array(N * N);
@@ -4468,13 +4487,14 @@ function planPowerLayout(units, maxPoles) {
         return touches;
     };
     const range = GENERATOR_POWER_RANGE;
-    const generator = { x: (range - POWER_GENERATOR_SIZE) / 2, y: (range - POWER_GENERATOR_SIZE) / 2, w: POWER_GENERATOR_SIZE, h: POWER_GENERATOR_SIZE };
+    const first = { x: (range - POWER_GENERATOR_SIZE) / 2, y: (range - POWER_GENERATOR_SIZE) / 2, w: POWER_GENERATOR_SIZE, h: POWER_GENERATOR_SIZE };
+    const sources = [first];
     const ranges = [{ kind: 'generator', x: 0, y: 0, size: range }];
     mark(powered, 0, 0, range, range);
-    mark(used, generator.x, generator.y, generator.w, generator.h);
+    mark(used, first.x, first.y, first.w, first.h);
     const bounds = { x0: 0, y0: 0, x1: range, y1: range };
     const center = { x: range / 2, y: range / 2 };
-    // The free spot nearest the generator for a `w` x `h` unit touching power, or null.
+    // The free spot nearest the first generator for a `w` x `h` unit touching power, or null.
     const spotFor = (w, h) => {
         let best = null;
         for (let y = bounds.y0 - h + 1 / Q; y < bounds.y1; y += 1 / Q) {
@@ -4486,16 +4506,16 @@ function planPowerLayout(units, maxPoles) {
         }
         return best;
     };
-    const poles = [];
-    // A pole where its 7x7 powers the most ground not powered yet (ties: nearest the generator).
-    const addPole = () => {
-        const half = POLE_POWER_RANGE / 2;
+    // A `size` piece with a `reach` x `reach` range where that range powers the most ground not
+    // powered yet (ties: nearest the first generator), touching power; null if none adds any.
+    const addSource = (kind, size, reach) => {
+        const half = reach / 2;
         let best = null;
-        for (let y = bounds.y0 - POWER_POLE_SIZE + 1 / Q; y < bounds.y1; y += 1 / Q) {
-            for (let x = bounds.x0 - POWER_POLE_SIZE + 1 / Q; x < bounds.x1; x += 1 / Q) {
-                if (!fits(x, y, POWER_POLE_SIZE, POWER_POLE_SIZE)) continue;
-                const cx = x + POWER_POLE_SIZE / 2;
-                const cy = y + POWER_POLE_SIZE / 2;
+        for (let y = bounds.y0 - size + 1 / Q; y < bounds.y1; y += 1 / Q) {
+            for (let x = bounds.x0 - size + 1 / Q; x < bounds.x1; x += 1 / Q) {
+                if (!fits(x, y, size, size)) continue;
+                const cx = x + size / 2;
+                const cy = y + size / 2;
                 let gain = 0;
                 for (let gy = Math.max(0, cell(cy - half)); gy < Math.min(N, cell(cy + half)); gy++) {
                     for (let gx = Math.max(0, cell(cx - half)); gx < Math.min(N, cell(cx + half)); gx++) {
@@ -4506,22 +4526,35 @@ function planPowerLayout(units, maxPoles) {
                 if (!best || gain > best.gain || (gain === best.gain && d < best.d)) best = { x, y, cx, cy, gain, d };
             }
         }
-        if (!best || best.gain === 0) return false;
-        poles.push({ x: best.x, y: best.y, w: POWER_POLE_SIZE, h: POWER_POLE_SIZE });
-        mark(used, best.x, best.y, POWER_POLE_SIZE, POWER_POLE_SIZE);
-        const r = { kind: 'pole', x: best.cx - half, y: best.cy - half, size: POLE_POWER_RANGE };
+        if (!best || best.gain === 0) return null;
+        const piece = { x: best.x, y: best.y, w: size, h: size };
+        mark(used, best.x, best.y, size, size);
+        const r = { kind, x: best.cx - half, y: best.cy - half, size: reach };
         ranges.push(r);
         mark(powered, r.x, r.y, r.size, r.size);
         bounds.x0 = Math.min(bounds.x0, r.x);
         bounds.y0 = Math.min(bounds.y0, r.y);
         bounds.x1 = Math.max(bounds.x1, r.x + r.size);
         bounds.y1 = Math.max(bounds.y1, r.y + r.size);
-        return true;
+        return piece;
     };
-    // Poles go down first, as many as the units' ground needs past what the generator's range
-    // holds (some reach past it), while there's still room for them at power's edge.
+    // The other generators power the same grid: each where it powers the most new ground.
+    for (let g = 1; g < generators; g++) {
+        const piece = addSource('generator', POWER_GENERATOR_SIZE, GENERATOR_POWER_RANGE);
+        if (!piece) break;
+        sources.push(piece);
+    }
+    const generatorRanges = ranges.length;
+    const poles = [];
+    const addPole = () => {
+        const pole = addSource('pole', POWER_POLE_SIZE, POLE_POWER_RANGE);
+        if (pole) poles.push(pole);
+        return !!pole;
+    };
+    // Poles go down first, as many as the units' ground needs past what the generators' ranges
+    // hold (some reach past them), while there's still room for them at power's edge.
     const ground = units.reduce((sum, u) => sum + u.w * u.h, 0);
-    const ahead = Math.min(maxPoles, Math.max(0, Math.ceil((ground - GENERATOR_POWER_RANGE ** 2) / 35)));
+    const ahead = Math.min(maxPoles, Math.max(0, Math.ceil((ground - sources.length * GENERATOR_POWER_RANGE ** 2) / 35)));
     while (poles.length < ahead && addPole());
     const placed = [];
     const unplaced = [];
@@ -4540,13 +4573,13 @@ function planPowerLayout(units, maxPoles) {
     const overlap = (a, b) => Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y);
     const asRect = r => ({ x: r.x, y: r.y, w: r.size, h: r.size });
     const networkOf = list => {
-        const reach = [asRect(ranges[0])];
+        const reach = ranges.slice(0, generatorRanges).map(asRect);
         let left = [...list];
         for (let grew = true; grew && left.length;) {
             grew = false;
             left = left.filter(k => {
                 if (!reach.some(r => overlap(r, poles[k]))) return true;
-                reach.push(asRect(ranges[k + 1]));
+                reach.push(asRect(ranges[generatorRanges + k]));
                 grew = true;
                 return false;
             });
@@ -4560,12 +4593,17 @@ function planPowerLayout(units, maxPoles) {
         if (placed.every(u => reach.some(r => overlap(r, u)))) kept = without;
     }
     return {
-        generator,
-        ranges: [ranges[0], ...kept.map(k => ranges[k + 1])],
+        generators: sources,
+        ranges: [...ranges.slice(0, generatorRanges), ...kept.map(k => ranges[generatorRanges + k])],
         poles: kept.map(k => poles[k]),
         placed,
         unplaced,
     };
+}
+
+// How many generators the electric units `rows` (a plan's producing E-mode rows) keep running.
+function planGenerators(rows) {
+    return generatorsInUse(powerUnits(rows).reduce((sum, u) => sum + unitWatts(u.facility), 0));
 }
 
 // The electric units `rows` (a plan's producing E-mode rows) take, one per physical unit, each
@@ -5056,7 +5094,7 @@ function renderPowerDiagram(map) {
         stroke="${colorOf(r)}" stroke-opacity="0.9" stroke-dasharray="0.35,0.25" stroke-width="0.1" />`).join('');
     // Each pole is wired to the generator or the pole it hangs off: the nearest node before it.
     const centerOf = m => ({ x: m.x + m.w / 2, y: m.y + m.h / 2 });
-    const nodes = [centerOf(map.generator)];
+    const nodes = map.generators.map(centerOf);
     const cables = map.poles.map(pole => {
         const c = centerOf(pole);
         const from = nodes.reduce((a, b) => (Math.hypot(b.x - c.x, b.y - c.y) < Math.hypot(a.x - c.x, a.y - c.y) ? b : a));
@@ -5073,10 +5111,9 @@ function renderPowerDiagram(map) {
             <rect x="${u.x + inset}" y="${u.y + inset}" width="${u.w - inset * 2}" height="${u.h - inset * 2}" rx="0.25" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="0.06" />
             <text x="${u.x + u.w / 2}" y="${u.y + u.h / 2}" font-size="${size.toFixed(2)}">${number}</text></g>`;
     }).join('');
-    const g = map.generator;
-    const generator = `<g class="env-building" ${tipAttrs('Crackle Generator', { detail: `${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE} range`, color: POWER_GENERATOR_COLOR })}>
+    const generators = map.generators.map(g => `<g class="env-building" ${tipAttrs('Crackle Generator', { detail: `${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE} range`, color: POWER_GENERATOR_COLOR })}>
         <rect x="${g.x + 0.05}" y="${g.y + 0.05}" width="${g.w - 0.1}" height="${g.h - 0.1}" rx="0.3" fill="${POWER_GENERATOR_COLOR}" stroke="currentColor" stroke-opacity="0.6" stroke-width="0.08" />
-        <text x="${g.x + g.w / 2}" y="${g.y + g.h / 2}" font-size="1.1" class="power-bolt">⚡</text></g>`;
+        <text x="${g.x + g.w / 2}" y="${g.y + g.h / 2}" font-size="1.1" class="power-bolt">⚡</text></g>`).join('');
     const poles = map.poles.map((p, i) => `<g class="env-building" ${tipAttrs('Crackle Power Pole', { detail: `#${i + 1} · ${POLE_POWER_RANGE}×${POLE_POWER_RANGE} range`, color: POWER_POLE_COLOR })}>
         <rect x="${p.x + 0.05}" y="${p.y + 0.05}" width="${p.w - 0.1}" height="${p.h - 0.1}" rx="0.25" fill="${POWER_POLE_COLOR}" stroke="currentColor" stroke-opacity="0.6" stroke-width="0.08" />
         <text x="${p.x + p.w / 2}" y="${p.y + p.h / 2}" font-size="0.8" class="power-bolt">⚡</text></g>`).join('');
@@ -5084,7 +5121,8 @@ function renderPowerDiagram(map) {
     const swatch = (color, label) => `
         <span class="env-legend-item"><span class="env-legend-swatch coverage" style="background:${color}33;border-color:${color}"></span>${label}</span>`;
     const colon = currentLocale() === 'zh-TW' ? '：' : ': ';
-    const legend = [swatch(POWER_COVERAGE_COLOR, `<span class="power-legend-text"><span>Power coverage</span>&nbsp;(${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE})</span>`)]
+    const generatorCount = map.generators.length > 1 ? ` ×${map.generators.length}` : '';
+    const legend = [swatch(POWER_COVERAGE_COLOR, `<span class="power-legend-text"><span>Power coverage</span>&nbsp;(${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE})${generatorCount}</span>`)]
         .concat(map.poles.length ? [swatch(POWER_COVERAGE_COLOR, `<span class="power-legend-text"><span>Power pole coverage</span>&nbsp;(${POLE_POWER_RANGE}×${POLE_POWER_RANGE}) ×${map.poles.length}</span>`)] : [])
         // Each line starts with the number its units carry in the map.
         .concat(facilities.map((facility, i) => {
@@ -5098,16 +5136,16 @@ function renderPowerDiagram(map) {
         <div class="env-diagram power-diagram">
             <svg viewBox="${x0} ${y0} ${width} ${height}" role="img" aria-label="Crackle Generator layout">
                 <g class="env-grid">${gridLines.join('')}</g>
-                ${rangeRects}${cables}${units}${rangeEdges}${generator}${poles}
+                ${rangeRects}${cables}${units}${rangeEdges}${generators}${poles}
             </svg>
             <div class="env-legend">${legend}</div>
         </div>`;
 }
 
-// The generator's section: its map next to a table of every unit running on it.
+// The generators' section: their map next to a table of every unit running on them.
 function powerSection(rows) {
     if (rows.length === 0) return '';
-    const map = planPowerLayout(powerUnits(rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0);
+    const map = planPowerLayout(powerUnits(rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0, planGenerators(rows));
     const used = map.placed.concat(map.unplaced).reduce((sum, u) => sum + unitWatts(u.facility), 0);
     const cap = getTargetEmodeWatts();
     const supply = getPowerGridRate() >= 1.15 ? ' · 120% supply' : '';
@@ -5116,7 +5154,7 @@ function powerSection(rows) {
         : '';
     return `
         <div class="facility-category">
-            <h4 class="facility-category-title"><span>Crackle Generator</span> <span class="env-mode-tag" style="--tint:${POWER_GENERATOR_COLOR}">⚡ ${used}W / ${cap}W${supply}</span></h4>
+            <h4 class="facility-category-title"><span>Crackle Generator</span>${map.generators.length > 1 ? ` ×${map.generators.length}` : ''} <span class="env-mode-tag" style="--tint:${POWER_GENERATOR_COLOR}">⚡ ${used}W / ${cap}W${supply}</span></h4>
             <p class="hint small">A suggested placement: every electric unit at least partly inside the generator's ${GENERATOR_POWER_RANGE}×${GENERATOR_POWER_RANGE} range or a power pole's ${POLE_POWER_RANGE}×${POLE_POWER_RANGE}, each pole partly inside a range already powered.</p>
             ${missing}
             <div class="env-unit">

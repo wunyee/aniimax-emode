@@ -3,7 +3,7 @@ import { placePower } from '../web/layout.js';
 
 const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 const range = (r, size) => ({ x: r.x + r.w / 2 - size / 2, y: r.y + r.h / 2 - size / 2, w: size, h: size });
-const powered = (power, unit) => [range(power.generator, 11), ...power.poles.map(p => range(p, 7))].some(r => overlap(r, unit) > 1e-9);
+const powered = (power, unit) => [...power.generators.map(g => range(g, 11)), ...power.poles.map(p => range(p, 7))].some(r => overlap(r, unit) > 1e-9);
 
 // Electric units laid out by their trips, far apart: the generator powers what it can reach, poles
 // reach further, and whatever is left moves into range. Nothing is left unpowered, and nothing
@@ -19,15 +19,29 @@ const members = [
 ];
 const before = members.map(m => ({ ...m }));
 const power = placePower(members, storage, cells, 2);
-assert.ok(power.generator, 'a generator is placed');
+assert.equal(power.generators.length, 1, 'a generator is placed');
 assert.equal(power.unpowered.length, 0, 'every electric unit is powered');
 for (const unit of members.filter(m => m.is_emode)) assert.ok(powered(power, unit), `${unit.facility} is powered`);
-const all = [...members, storage, power.generator, ...power.poles];
+const all = [...members, storage, ...power.generators, ...power.poles];
 for (let i = 0; i < all.length; i++) {
     for (let j = i + 1; j < all.length; j++) assert.ok(overlap(all[i], all[j]) < 1e-9, `no overlap between ${i} and ${j}`);
 }
 // A unit that isn't electric stays where its trips put it.
 assert.deepEqual(members[4], before[4]);
+
+// Two generators the layout put down power one grid: units far apart, each in reach of one of
+// them, need no pole.
+const twoGenerators = [
+    { x: 5, y: 5, w: 2, h: 2, weight: 0, generator: true },
+    { x: 50, y: 30, w: 2, h: 2, weight: 0, generator: true },
+    { x: 8, y: 8, w: 2.5, h: 2.5, weight: 30, is_emode: true, facility: 'Jukebox Dryer' },
+    { x: 46, y: 27, w: 1.5, h: 1.5, weight: 20, is_emode: true, facility: 'Simmering Pot' },
+];
+const grid = placePower(twoGenerators, storage, cells, 0);
+assert.equal(grid.generators.length, 2, 'both generators are kept');
+assert.equal(grid.poles.length, 0, 'no pole is needed');
+assert.equal(grid.unpowered.length, 0, 'every electric unit is powered');
+for (const unit of twoGenerators.filter(m => m.is_emode)) assert.ok(powered(grid, unit), `${unit.facility} is powered`);
 
 // No electric unit, nothing to place.
 assert.equal(placePower([{ x: 0, y: 0, w: 2, h: 2, weight: 1 }], storage, cells, 2), null);
