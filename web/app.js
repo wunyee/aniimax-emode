@@ -7,7 +7,7 @@ import {
     FACILITIES, FACILITY_CATEGORIES, FACILITY_CATEGORY_BY_NAME, FACILITY_FOOTPRINTS, HOMELAND_PLOTS, HOMELAND_PLOT_SIZE,
     MAX_HOME_LEVEL, ANIIMO_MAX, simpleSetup,
     LEVEL_UP_COSTS, LEVEL_UP_CHAINS, SPECIAL_RECIPES, SEASON, ANIIPOD_TIERS, PERSONALITY_PAIRS, personalityLetter, opposedPersonality, recipeFamily,
-    FACILITY_POWER_WATTS, DEFAULT_GENERATOR_WATTS, GENERATOR_WATTS_BY_HOME_LEVEL, GENERATOR_CAPACITY_OPTIONS,
+    FACILITY_WATTS_PER_LEVEL, facilityWatts, DEFAULT_GENERATOR_WATTS, GENERATOR_WATTS_BY_HOME_LEVEL, GENERATOR_CAPACITY_OPTIONS,
     GENERATOR_POWER_RANGE, POLE_POWER_RANGE, POWER_POLE_COUNTS_BY_RV,
 } from './facility-config.js';
 import { createShareUrl, readShareHash, urlWithoutShare } from './share-config.js';
@@ -254,6 +254,15 @@ export const EMODE_PRIORITY = [
     'Well'
 ];
 
+// Watts one electric unit of `name` draws at the level it's at (see `facilityWatts`): the level
+// the RV allows in simple mode; in advanced mode the highest level owned, the level the backup
+// planner runs electric units at (see `FacilityCounts::get_level` in models.rs).
+function unitWatts(name) {
+    const tiers = (isSimpleMode() ? simpleSetup(selectedHomeLevel()).facilities[name] : facilityTiers[name]) || [];
+    const owned = tiers.filter(t => t.count > 0);
+    return facilityWatts(name, Math.max(1, ...(owned.length ? owned : tiers).map(t => t.level)));
+}
+
 export function getGeneratorCapacity() {
     if (isSimpleMode()) {
         const homeLevel = selectedHomeLevel();
@@ -285,7 +294,7 @@ export function autoAllocateEmode(homeLevel, maxWatts = getTargetEmodeWatts(), a
     for (const name of EMODE_PRIORITY) {
         const fac = FACILITIES.find(f => f.name === name);
         if (!fac || !fac.supportsEmode) continue;
-        const wattsPerUnit = FACILITY_POWER_WATTS[name] || 0;
+        const wattsPerUnit = facilityWatts(name, Math.max(...(facilities[name] || []).map(t => t.level)));
         if (wattsPerUnit <= 0) continue;
 
         let availableUnits = (facilities[name] || []).reduce((sum, t) => sum + t.count, 0);
@@ -343,7 +352,7 @@ function activePowerGrid() {
     if (!isSimpleMode() || !(document.getElementById('emode-simple-on')?.checked ?? true) || selectedHomeLevel() < 12) return null;
     const watts = {};
     for (const name of EMODE_PRIORITY) {
-        if (FACILITY_POWER_WATTS[name] > 0) watts[name] = FACILITY_POWER_WATTS[name];
+        if (unitWatts(name) > 0) watts[name] = unitWatts(name);
     }
     return { watts, capacity: getTargetEmodeWatts() };
 }
@@ -404,7 +413,7 @@ function sharedUnits(rows) {
 // units shared between tiers count once.
 function planUnits(plan, electric) {
     const counts = {};
-    const rows = (plan.coin_items || []).filter(step => step.status === 'producing' && !!step.is_emode === electric && FACILITY_POWER_WATTS[step.facility] > 0);
+    const rows = (plan.coin_items || []).filter(step => step.status === 'producing' && !!step.is_emode === electric && FACILITY_WATTS_PER_LEVEL[step.facility] > 0);
     rows.filter(step => !sharesUnits(step)).forEach(step => { counts[step.facility] = (counts[step.facility] || 0) + step.facility_count; });
     sharedUnits(rows).forEach(unit => { counts[unit.facility] = (counts[unit.facility] || 0) + 1; });
     return counts;
@@ -446,8 +455,7 @@ function fillGenerator(plan, grid, skip = new Set()) {
 function calculatePowerWatts(counts) {
     let total = 0;
     for (const [name, count] of Object.entries(counts)) {
-        const w = FACILITY_POWER_WATTS[name] || 0;
-        total += w * count;
+        total += unitWatts(name) * count;
     }
     return total;
 }
@@ -588,7 +596,7 @@ function attachEmodeHandlers() {
             for (const name of EMODE_PRIORITY) {
                 const fac = FACILITIES.find(f => f.name === name);
                 if (!fac || !fac.supportsEmode) continue;
-                const w = FACILITY_POWER_WATTS[name] || 0;
+                const w = unitWatts(name);
                 const owned = (facilityTiers[name] || []).reduce((sum, t) => sum + t.count, 0);
                 if (owned > 0 && remainingWatts >= w * owned) {
                     emodeFacilities.add(name);
@@ -5061,7 +5069,7 @@ function renderPowerDiagram(map) {
         const color = powerFacilityColor(u.facility);
         const number = facilities.indexOf(u.facility) + 1;
         const size = Math.min(0.9, Math.min(u.w, u.h) * 0.45);
-        return `<g class="env-plot" ${tipAttrs(u.facility, { detail: u.label, stats: `${FACILITY_POWER_WATTS[u.facility] || 0}W`, color })}>
+        return `<g class="env-plot" ${tipAttrs(u.facility, { detail: u.label, stats: `${unitWatts(u.facility)}W`, color })}>
             <rect x="${u.x + inset}" y="${u.y + inset}" width="${u.w - inset * 2}" height="${u.h - inset * 2}" rx="0.25" fill="${color}" fill-opacity="0.85" stroke="${color}" stroke-width="0.06" />
             <text x="${u.x + u.w / 2}" y="${u.y + u.h / 2}" font-size="${size.toFixed(2)}">${number}</text></g>`;
     }).join('');
@@ -5084,7 +5092,7 @@ function renderPowerDiagram(map) {
             const items = [...new Set(mine.flatMap(u => u.items))];
             const made = items.length ? `${colon}${items.map(item => `<span>${item}</span>`).join(' / ')}` : '';
             return `
-        <span class="env-legend-item"><span class="env-legend-swatch" style="background:${powerFacilityColor(facility)}"></span><span class="power-legend-text"><b>${i + 1}</b>&nbsp;<span>${facility}</span>&nbsp;×${mine.length} · ${(FACILITY_POWER_WATTS[facility] || 0) * mine.length}W${made}</span></span>`;
+        <span class="env-legend-item"><span class="env-legend-swatch" style="background:${powerFacilityColor(facility)}"></span><span class="power-legend-text"><b>${i + 1}</b>&nbsp;<span>${facility}</span>&nbsp;×${mine.length} · ${unitWatts(facility) * mine.length}W${made}</span></span>`;
         })).join('');
     return `
         <div class="env-diagram power-diagram">
@@ -5100,7 +5108,7 @@ function renderPowerDiagram(map) {
 function powerSection(rows) {
     if (rows.length === 0) return '';
     const map = planPowerLayout(powerUnits(rows), POWER_POLE_COUNTS_BY_RV[layoutHomeLevel() - 1] ?? 0);
-    const used = map.placed.concat(map.unplaced).reduce((sum, u) => sum + (FACILITY_POWER_WATTS[u.facility] || 0), 0);
+    const used = map.placed.concat(map.unplaced).reduce((sum, u) => sum + unitWatts(u.facility), 0);
     const cap = getTargetEmodeWatts();
     const supply = getPowerGridRate() >= 1.15 ? ' · 120% supply' : '';
     const missing = map.unplaced.length
