@@ -261,7 +261,7 @@ pub const CREW_SUFFIX: &str = "__by";
 /// `aniimo_homeland.csv` (exported from the game files by `tools/export_homeland_abilities.py`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DexAniimo {
-    /// The handbook number, e.g. 1 for Emberpup.
+    /// The handbook number in its region, e.g. 1 for Emberpup.
     pub number: u32,
     /// The game's id for this species and form.
     pub pet_id: u32,
@@ -270,6 +270,12 @@ pub struct DexAniimo {
     pub name_zh_tw: String,
     pub form: String,
     pub form_zh_tw: String,
+    /// The region whose handbook numbers it (e.g. 300001, 300301): each region's handbook starts
+    /// again from 1. 1000 for the Aniimo outside any region, 0 if the game gives none.
+    pub region: u32,
+    /// Its family (the game's `ethnicGroup`): every stage and form of one evolution line, e.g.
+    /// 1017 for Susuta to Panpanta. Some recipes only one family can work (see `RECIPE_FAMILIES`).
+    pub family: u32,
     /// Each ability this form has, with its level; abilities it hasn't got are left out.
     pub abilities: std::collections::BTreeMap<String, u32>,
 }

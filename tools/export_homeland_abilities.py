@@ -8,11 +8,14 @@ GAME_DIR defaults to D:/SteamLibrary/steamapps/common/Aniimo. The game directory
 opened for reading; everything is decoded in memory and the one output file is written into
 this repository.
 
-Where the data lives: Aniimo_Data/cvs/res/lua/LuaScripts.xdt is a JSON index into
-LuaScripts.xdf. Entry Common/Data/pmdata.bin there is the game's config database (the "BDD"
+Where the data lives: Aniimo_Data/StreamingAssets/cvs/res/lua/ (the installed game) and
+Aniimo_Data/cvs/res/lua/ (a hot update) each hold a LuaScripts.xdt, a JSON index into
+LuaScripts.xdf; the one with the higher CMVersion is current. Entry Common/Data/pmdata.bin there is the game's config database (the "BDD"
 format xlua.dll loads), and Data/I18N/NewTextMap_<lang>.json + Compress_<lang>.bin hold the text.
-Tables read: pet_data (homeAbility, formId, name), home_ability_data (ability ids),
-pet_form_type_data (form names) and pet_research_id_to_number (the species No.).
+Tables read: pet_data (homeAbility, formId, name, ethnicGroup), home_ability_data (ability ids),
+pet_form_type_data (form names), pet_research_id_to_number (the species No.) and
+pet_research_species_country_set (the region whose handbook numbers it: each region's handbook
+starts again from 1).
 
 BDD layout, as far as this script needs it (all integers little-endian, all addresses are byte
 offsets into pmdata.bin):
@@ -49,10 +52,36 @@ ABILITIES = [
 
 WIDTHS = {1: 1, 2: 1, 3: 2, 4: 2, 5: 4, 6: 4}
 
+# pet_research_species_country_set's list of Aniimo outside any region's handbook.
+OUTSIDE_REGIONS = 1000
+
+
+# Where LuaScripts.xdt/.xdf can be, under the game directory: the installed game's copy and a
+# hot update's. The game runs whichever is newer.
+LUA_DIRS = [
+    os.path.join("Aniimo_Data", "StreamingAssets", "cvs", "res", "lua"),
+    os.path.join("Aniimo_Data", "cvs", "res", "lua"),
+]
+
+
+def lua_dir(game_dir):
+    """The directory of the newest LuaScripts.xdt under `game_dir` (highest CMVersion)."""
+    best = None
+    for rel in LUA_DIRS:
+        path = os.path.join(game_dir, rel, "LuaScripts.xdt")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                version = json.load(f)["CMVersion"]
+            if best is None or version > best[0]:
+                best = (version, os.path.join(game_dir, rel))
+    if best is None:
+        sys.exit(f"no LuaScripts.xdt under {game_dir}")
+    return best[1]
+
 
 def read_archive(game_dir, names):
     """Returns {entry name: bytes} for the wanted entries of LuaScripts.xdf."""
-    base = os.path.join(game_dir, "Aniimo_Data", "cvs", "res", "lua")
+    base = lua_dir(game_dir)
     with open(os.path.join(base, "LuaScripts.xdt"), "r", encoding="utf-8") as f:
         index = json.load(f)
     found = {}
@@ -168,7 +197,14 @@ def main():
 
     forms = db.root_table("pet_form_type_data")
     numbers = db.root_table("pet_research_id_to_number")
+    countries = db.root_table("pet_research_species_country_set")
     pets = db.root_table("pet_data", depth=0)
+
+    def region_of(pet_id, pet):
+        """The region whose handbook numbers this species (300001, 300301, ...), else 1000 for
+        the list of Aniimo outside any region (numbered from 10001), else 0."""
+        regions = sorted(countries.get(pet.get("baseFormPet", pet_id)) or {})
+        return next((r for r in regions if r != OUTSIDE_REGIONS), regions[0] if regions else 0)
 
     rows = []
     for pet_id, record in pets.items():
@@ -181,16 +217,17 @@ def main():
             continue
         form_id = pet.get("formId", 1)
         form_name = forms[form_id]["name"]
-        rows.append([number, pet_id, form_id, en(pet["name"]), zh(pet["name"]), en(form_name), zh(form_name)]
+        rows.append([number, pet_id, form_id, en(pet["name"]), zh(pet["name"]), en(form_name), zh(form_name),
+                     region_of(pet_id, pet), pet.get("ethnicGroup", pet_id // 1000)]
                     + [abilities.get(aid, 0) for aid, _ in ABILITIES])
-    rows.sort(key=lambda r: (r[0], r[1]))
+    rows.sort(key=lambda r: (r[7] == 0, r[7] == OUTSIDE_REGIONS, r[7], r[0], r[1]))
 
     with open(args.out, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
-        w.writerow(["number", "pet_id", "form_id", "name", "name_zh_tw", "form", "form_zh_tw"]
+        w.writerow(["number", "pet_id", "form_id", "name", "name_zh_tw", "form", "form_zh_tw", "region", "family"]
                    + [col for _, col in ABILITIES])
         w.writerows(rows)
-    print(f"wrote {len(rows)} forms of {len({r[0] for r in rows})} species to {os.path.normpath(args.out)}")
+    print(f"wrote {len(rows)} forms of {len({(r[7], r[0]) for r in rows})} species to {os.path.normpath(args.out)}")
 
 
 if __name__ == "__main__":

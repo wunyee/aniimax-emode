@@ -40,7 +40,7 @@ pub fn load_aniimo_requirements(data_dir: &Path) -> Result<AniimoRequirements, B
 }
 
 /// The columns of `aniimo_homeland.csv` before its ability columns.
-const DEX_COLUMNS: [&str; 7] = ["number", "pet_id", "form_id", "name", "name_zh_tw", "form", "form_zh_tw"];
+const DEX_COLUMNS: [&str; 9] = ["number", "pet_id", "form_id", "name", "name_zh_tw", "form", "form_zh_tw", "region", "family"];
 
 /// Parses the contents of `aniimo_homeland.csv`: one row per form of each Aniimo in the handbook,
 /// its names, then one column per Homeland ability with the form's level (0 when it hasn't got it).
@@ -69,6 +69,8 @@ pub fn parse_aniimo_homeland(csv_text: &str) -> Result<Vec<crate::models::DexAni
             name_zh_tw: field(4),
             form: field(5),
             form_zh_tw: field(6),
+            region: field(7).parse()?,
+            family: field(8).parse()?,
             abilities,
         });
     }
@@ -153,10 +155,17 @@ struct SeasonRow {
     #[serde(rename = "yield")]
     yield_amount: u32,
     facility_level: u32,
+    /// Seconds a batch takes on power, for a recipe a facility can make in E-mode.
+    #[serde(default)]
+    emode_base_time: Option<f64>,
+    /// The growing condition a crop needs, e.g. "Adequate".
+    #[serde(default)]
+    environment: Option<String>,
 }
 
 /// Parses a season's recipes (columns `name, facility, raw_materials, required_amount, seed_cost,
-/// sell_value, points, production_time, workload, yield, facility_level`; see
+/// sell_value, points, production_time, workload, yield, facility_level`, then optionally
+/// `emode_base_time` and `environment`; see
 /// [`crate::models::SeasonTerms`]). Crops are watered like any other; call
 /// [`crate::models::apply_watering`] on them.
 pub fn parse_season(csv_text: &str) -> Result<Vec<ProductionItem>, Box<dyn Error>> {
@@ -184,9 +193,9 @@ pub fn parse_season(csv_text: &str) -> Result<Vec<ProductionItem>, Box<dyn Error
             facility_level: row.facility_level,
             module_requirement: None,
             workload: row.workload,
-            emode_base_time: None,
+            emode_base_time: row.emode_base_time,
             byproduct: None,
-            environment: None,
+            environment: row.environment.filter(|e| !e.is_empty()),
             season: Some(crate::models::SeasonTerms {
                 points: row.points,
                 seed_cost: row.seed_cost.unwrap_or(0.0),

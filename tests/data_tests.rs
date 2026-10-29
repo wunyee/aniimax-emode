@@ -107,13 +107,18 @@ fn test_currency_types() {
 /// something not yet in the data, add it here deliberately.
 const KNOWN_MISSING_INGREDIENTS: &[&str] = &[];
 
-/// Every item, with the season's (see `harvest_moon_festival.csv`), which the checks cover too.
+/// Every Home season's CSV; seasons come round again, so each one stays in the data.
+const SEASON_FILES: [&str; 2] = ["harvest_moon_festival.csv", "magical_wonder_night.csv"];
+
+/// Every item, with every season's (see `SEASON_FILES`), which the checks cover too.
 fn load_items() -> Option<Vec<aniimax::models::ProductionItem>> {
     let data_dir = Path::new("data");
     data_dir.exists().then(|| {
         let mut items = load_all_data(data_dir).expect("Failed to load data");
-        let season = std::fs::read_to_string(data_dir.join("harvest_moon_festival.csv")).expect("season data");
-        items.extend(aniimax::data::parse_season(&season).expect("season parses"));
+        for file in SEASON_FILES {
+            let season = std::fs::read_to_string(data_dir.join(file)).expect("season data");
+            items.extend(aniimax::data::parse_season(&season).unwrap_or_else(|e| panic!("{file} parses: {e}")));
+        }
         items
     })
 }

@@ -173,10 +173,23 @@ fn format_time(seconds: f64) -> String {
 
 /// Get embedded production data.
 /// This embeds the CSV data directly into the WASM binary.
-/// The Harvest Moon Festival's recipes, watered like everything else.
-fn embedded_season_items() -> Vec<ProductionItem> {
-    let mut season = crate::data::parse_season(include_str!("../data/harvest_moon_festival.csv"))
-        .expect("embedded harvest_moon_festival.csv is valid");
+/// Every Home season the web build knows, by the id the page sends (see `SEASONS` in
+/// web/facility-config.js), with its recipes. Seasons come round again, so none is ever dropped.
+const SEASONS: [(&str, &str); 2] = [
+    ("harvest_moon_festival", include_str!("../data/harvest_moon_festival.csv")),
+    ("magical_wonder_night", include_str!("../data/magical_wonder_night.csv")),
+];
+
+/// The season the page names, or the first one when it names none (pages from before there were
+/// several only ever had the Harvest Moon Festival).
+fn season_id(id: Option<&str>) -> &'static str {
+    SEASONS.iter().map(|(s, _)| *s).find(|s| Some(*s) == id).unwrap_or(SEASONS[0].0)
+}
+
+/// A season's recipes, watered like everything else.
+fn embedded_season_items(id: &str) -> Vec<ProductionItem> {
+    let (name, text) = SEASONS.iter().find(|(s, _)| *s == id).expect("a known season");
+    let mut season = crate::data::parse_season(text).unwrap_or_else(|e| panic!("embedded {name}.csv is valid: {e}"));
     crate::models::apply_watering(&mut season);
     season
 }
@@ -763,10 +776,14 @@ pub struct JsPlanInput {
     /// before it allow.
     #[serde(default)]
     pub priorities: Vec<String>,
-    /// Whether plans may use the Harvest Moon Festival's recipes. Its points are the priority
+    /// Whether plans may use the season's recipes (see `season_id`). Its points are the priority
     /// `"season_points"` (see [`crate::models::SEASON_POINTS`]).
     #[serde(default)]
     pub season: bool,
+    /// Which season, e.g. "magical_wonder_night" (see `SEASONS`); the Harvest Moon Festival if
+    /// left out.
+    #[serde(default)]
+    pub season_id: Option<String>,
     /// During the season, the most of its currency (Moonray Wheat) a day the player can spend on
     /// seeds; `None` for no limit.
     #[serde(default)]
@@ -1687,7 +1704,7 @@ impl PreparedInput {
         };
         let mut items = get_embedded_items();
         if input.season {
-            let mut season = embedded_season_items();
+            let mut season = embedded_season_items(season_id(input.season_id.as_deref()));
             for item in &mut season {
                 let min_plots = input.season_min_plots.get(&item.name).copied().unwrap_or(0);
                 if let Some(terms) = item.season.as_mut() {
@@ -2116,6 +2133,8 @@ struct RecipeInfo {
     byproduct_item: Option<String>,
     /// Whether it's a season recipe (see [`crate::models::SeasonTerms`]).
     season: bool,
+    /// The season it belongs to, e.g. "magical_wonder_night" (see `SEASONS`).
+    season_id: Option<String>,
     /// For a season crop, the season currency its seeds cost a batch.
     season_seed_cost: Option<f64>,
     /// Base production time in seconds under E-mode (Electric mode).
@@ -2127,7 +2146,13 @@ struct RecipeInfo {
 #[wasm_bindgen]
 pub fn get_all_items() -> String {
     let mut items = get_embedded_items();
-    items.extend(embedded_season_items());
+    let mut seasons = std::collections::HashMap::new();
+    for (id, _) in SEASONS {
+        for item in embedded_season_items(id) {
+            seasons.insert((item.name.clone(), item.facility.clone()), id);
+            items.push(item);
+        }
+    }
     let requirements = embedded_aniimo_requirements();
     let unverified = embedded_unverified();
     let grower_steps = embedded_grower_steps();
@@ -2154,6 +2179,7 @@ pub fn get_all_items() -> String {
             environment: item.environment.clone(),
             byproduct_item: item.byproduct.as_ref().and_then(|(resource, _)| crate::models::byproduct_item(resource)).map(str::to_string),
             season: item.season.is_some(),
+            season_id: seasons.get(&(item.name.clone(), item.facility.clone())).map(|id| id.to_string()),
             season_seed_cost: item.season.map(|s| s.seed_cost).filter(|&cost| cost > 0.0),
             emode_base_time: item.emode_base_time,
         })

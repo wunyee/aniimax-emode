@@ -8,8 +8,11 @@ const columns = header.split(',');
 const dex = lines.map(line => {
     const cells = line.split(',');
     const abilities = {};
-    columns.slice(7).forEach((ability, i) => { if (Number(cells[7 + i]) > 0) abilities[ability] = Number(cells[7 + i]); });
-    return { number: Number(cells[0]), pet_id: Number(cells[1]), form_id: Number(cells[2]), name: cells[3], form: cells[5], abilities };
+    columns.slice(9).forEach((ability, i) => { if (Number(cells[9 + i]) > 0) abilities[ability] = Number(cells[9 + i]); });
+    return {
+        number: Number(cells[0]), pet_id: Number(cells[1]), form_id: Number(cells[2]), name: cells[3], form: cells[5],
+        region: Number(cells[7]), family: Number(cells[8]), abilities,
+    };
 });
 
 const caps = { Fire: 3, Grass: 3, Water: 3, Earth: 3, Lightning: 3, Wind: 3, Dark: 3, Artisanship: 3, Leisure: 3, Perfumery: 3 };
@@ -80,20 +83,28 @@ const busyOf = aniimo => aniimo.pieces.reduce((sum, p) => sum + p.busy, 0);
 // A recipe only one family can make is worked by that family, whatever else has the ability.
 {
     const { recipeFamily } = await import('../web/facility-config.js');
-    assert.deepEqual(recipeFamily('Tidewhisper Sandcastle', 'quick_sea_salt'), [49, 52]);
-    assert.deepEqual(recipeFamily('Tidewhisper Sandcastle', 'pearl'), [53, 55]);
+    assert.equal(recipeFamily('Tidewhisper Sandcastle', 'quick_sea_salt'), 1017);
+    assert.equal(recipeFamily('Tidewhisper Sandcastle', 'pearl'), 1019);
+    assert.equal(recipeFamily('Starfall Hammock', 'gold_speck_cap'), 1063);
+    // One facility, a family per recipe: the Nimbus Bed's wool takes Nimbi's family, its petals Iris's.
+    assert.equal(recipeFamily('Nimbus Bed', 'quick_wool'), 1026);
+    assert.equal(recipeFamily('Nimbus Bed', 'petals'), 1021);
     assert.equal(recipeFamily('Mine', 'rock'), null);
     const resident = (item, facility = 'Tidewhisper Sandcastle') => ({
         ability: 'Leisure', level: 3, busy: 1, personality: null, kind: 'resident', feedsLevelUp: false,
         family: recipeFamily(facility, item),
     });
     const [otter] = recommendTeam({ pieces: [resident('sea_salt')], dex, caps });
-    assert.ok(otter.form.number >= 49 && otter.form.number <= 52, otter.form.name);
+    assert.equal(otter.form.family, 1017, otter.form.name);
     const [star] = recommendTeam({ pieces: [resident('pearl')], dex, caps });
-    assert.ok(star.form.number >= 53 && star.form.number <= 55, star.form.name);
+    assert.equal(star.form.family, 1019, star.form.name);
     // A whole facility's recipes, too: the Dewy House takes only Dewy and Fragrancier.
     const team = recommendTeam({ pieces: [resident('aromathyst', 'Dewy House')], dex, caps });
-    assert.ok([38, 39].includes(team[0].form.number));
+    assert.equal(team[0].form.family, 1035);
+    // Each region's handbook starts again from 1, so a family isn't a range of numbers: Dewlop is
+    // number 5 in its region, as Celestis is in the first, but only Celestis's family makes Stars.
+    const [hammock] = recommendTeam({ pieces: [resident('star', 'Starfall Hammock')], dex, caps });
+    assert.equal(hammock.form.family, 1001, hammock.form.name);
 }
 
 // An Aniimo with time to spare is the best hauler that can still do its work.
@@ -145,9 +156,11 @@ const busyOf = aniimo => aniimo.pieces.reduce((sum, p) => sum + p.busy, 0);
         fields('Water', 0.15, 'Watering'), fields('Earth', 0.13, 'Reclaiming'),
     ];
     const team = recommendTeam({ pieces, dex, caps });
-    assert.equal(team.length, 3);
-    // 0.3, 0.23 and 0.2: the Artisanship work alone, the fields' jobs shared by the other two.
-    assert.ok(Math.max(...team.map(busyOf)) <= 0.3 + 1e-9, team.map(busyOf).join());
+    // Two: an Artisanship 3 Aniimo that also sows and reaps (Ignitis's Forest Form), and one with
+    // Water and Earth for the rest (Coraliz, from the second region's handbook).
+    assert.equal(team.length, 2);
+    assert.ok(Math.abs(team.reduce((sum, a) => sum + busyOf(a), 0) - 0.73) < 1e-9, team.map(busyOf).join());
+    team.forEach(a => assert.ok(busyOf(a) <= 1 + 1e-9));
     for (const aniimo of team.filter(a => a.pieces.every(p => p.jobs))) {
         const able = dex.filter(f => withinCaps(f, caps) && aniimo.pieces.every(p => (f.abilities[p.ability] || 0) >= p.level));
         const best = Math.max(...able.map(f => f.abilities.Hauling || 0));

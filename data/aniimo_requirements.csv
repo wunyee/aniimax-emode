@@ -160,12 +160,12 @@ natural_mineral_spring_water, Well, Water, 3
 quick_natural_mineral_spring_water, Well, Water, 3
 rough_lumber, Woodworking Bench, Artisanship, 2
 standard_planks, Woodworking Bench, Artisanship, 2
-laminated_beams, Woodworking Bench, Artisanship, 2
-densified_timber_component, Woodworking Bench, Artisanship, 2
+laminated_beams, Woodworking Bench, Artisanship, 3
+densified_timber_component, Woodworking Bench, Artisanship, 3
 coarse_sifted_ore, Chimney Kiln, Fire, 2
 sintered_ore_brick, Chimney Kiln, Fire, 2
-refined_ore, Chimney Kiln, Fire, 2
-microcrystalline_ore_plate, Chimney Kiln, Fire, 2
+refined_ore, Chimney Kiln, Fire, 3
+microcrystalline_ore_plate, Chimney Kiln, Fire, 3
 growth_bud, Dance Pad Polisher, Lightning, 1
 growth_flower, Dance Pad Polisher, Lightning, 2
 growth_fruit, Dance Pad Polisher, Lightning, 3
@@ -173,8 +173,49 @@ aniipod, Aniipod Maker, Lightning, 1
 aniipod_pro, Aniipod Maker, Lightning, 2
 aniipod_mega, Aniipod Maker, Lightning, 3
 roasted_waxing_moon_pepper, Claw Game Cooker, Fire, 3
-moondew_radish_slices, Blazing Stove, Fire, 3
-umbral_hot_pot, Blazing Stove, Fire, 3
+moondew_radish_slices, Blazing Stove, Fire, 2
+umbral_hot_pot, Blazing Stove, Fire, 2
 umbral_sweet_and_spicy_sauce, Simmering Pot, Fire, 3
-umbral_pickle, Pickling Jar, Dark, 3
+umbral_pickle, Pickling Jar, Dark, 2
 harvest_platter, Crafting Table, Artisanship, 3
+silver_ore, Mine, Earth, 3
+gold_speck_cap, Starfall Hammock, Leisure, 3
+quick_pearl, Tidewhisper Sandcastle, Leisure, 3
+sweet_cone, Tidewhisper Sandcastle, Leisure, 3
+snowmelt_cold_spring, Well, Water, 3
+quick_snowmelt_cold_spring, Well, Water, 3
+pearl_powder, Carousel Mill, Wind, 3
+sorghum_flour, Carousel Mill, Wind, 3
+gold_dust, Carousel Mill, Wind, 3
+bright_silver_powder, Carousel Mill, Wind, 3
+magic_pumpkin_lantern, Crafting Table, Artisanship, 2
+memory_lantern, Crafting Table, Artisanship, 2
+glowfruit_lantern_set, Crafting Table, Artisanship, 3
+star_diamond, Crafting Table, Artisanship, 3
+pearl_face_cream, Crafting Table, Artisanship, 3
+quicksilver_springstone, Crafting Table, Artisanship, 3
+glitter_powder, Crafting Table, Artisanship, 3
+orange_flower_scented_mat, Crafting Table, Artisanship, 3
+premium_quicksilver_springstone, Crafting Table, Artisanship, 3
+dried_orange_flower, Jukebox Dryer, Dark, 3
+agave_fiber, Jukebox Dryer, Dark, 3
+sea_salt_roasted_pumpkin, Claw Game Cooker, Fire, 2
+sisal_plush_mat, Joy Wheel Loom, Wind, 3
+coconut_milk_lotion, Phonolfactory Table, Perfumery, 3
+orange_flower_skin_balm, Phonolfactory Table, Perfumery, 3
+gold_dust_sachet, Phonolfactory Table, Perfumery, 3
+gleam_fruit_nectar, Bouncy Brew Keg, Water, 2
+red_sorghum_rice_drink, Bouncy Brew Keg, Water, 3
+cocoa_sweet_cone, Bouncy Brew Keg, Water, 3
+sugar_core_sweet_cone, Bouncy Brew Keg, Water, 3
+golden_lantern_pumpkin_soup, Simmering Pot, Fire, 2
+potato_starch, Simmering Pot, Fire, 3
+sorghum_porridge, Simmering Pot, Fire, 3
+orange_flower_syrup, Simmering Pot, Fire, 3
+honey_glazed_pumpkin_cup, Blazing Stove, Fire, 2
+magic_pumpkin_cake, Blazing Stove, Fire, 2
+shredded_coconut_cake, Blazing Stove, Fire, 3
+cranberry_soft_cake, Blazing Stove, Fire, 3
+orange_flower_rice_drink, Blazing Stove, Fire, 3
+candied_lanternfruit, Pickling Jar, Dark, 2
+sorghum_fermented_mash, Pickling Jar, Dark, 3

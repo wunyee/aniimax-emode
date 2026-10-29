@@ -52,9 +52,9 @@ function easiestFirst(a, b) {
 }
 
 // Whether `form` can work `piece`: the ability at the level, and of the family the recipe takes,
-// if only one can make it (`piece.family`, handbook numbers first to last; see `RECIPE_FAMILIES`).
+// if only one can make it (`piece.family`, a family id; see `RECIPE_FAMILIES`).
 const canDo = (form, piece) => !!form && (form.abilities[piece.ability] || 0) >= piece.level
-    && (!piece.family || (form.number >= piece.family[0] && form.number <= piece.family[1]));
+    && (!piece.family || form.family === piece.family);
 
 const clashes = (personalities, piece) => !!piece.personality && personalities.has(opposedPersonality(piece.personality));
 
