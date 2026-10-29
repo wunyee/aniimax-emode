@@ -865,6 +865,54 @@ function currentConfig() {
     return data;
 }
 
+// Each persisted field's value on a fresh page, before anything saved is loaded (see `initApp`):
+// a share link leaves out whatever still has it.
+let freshFields = {};
+
+function captureFreshFields() {
+    freshFields = {};
+    getPersistedFieldIds().forEach(id => {
+        const el = document.getElementById(id);
+        if (el) freshFields[id] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+    });
+}
+
+const ALWAYS_SHARED = new Set(['level-up-target', 'mode-simple', 'mode-advanced']);
+
+// What share links are packed against (see `packConfig` in share-config.js). New facilities,
+// fields and Recipe Notes go at the end of their lists, so older links still read the same.
+function shareSchema() {
+    const tiers = defaultFacilityTiers();
+    // Some fields always go in, as being saved at all means something: a saved level-up target
+    // counts as picked (see `levelUpTargetChosen`), and a save without the mode is one from
+    // before simple mode (see `migrateSavedConfig`).
+    const fields = Object.fromEntries(Object.entries(freshFields).filter(([id]) => !ALWAYS_SHARED.has(id)));
+    return {
+        facilities: FACILITIES.map(f => ({ name: f.name, slug: f.slug, tiers: tiers[f.name] })),
+        fields,
+        special: SPECIAL_RECIPES.map(r => r.name),
+        seasonNotes: seasonNoteNames(),
+        priorities: PRIORITY_TARGETS.map(t => ({ target: t.id, on: t.id === 'coins' })),
+    };
+}
+
+// Copies `input`'s text, by the Clipboard API or, where the browser won't allow it, by selecting
+// it; whether it worked.
+async function copyText(input) {
+    try {
+        await navigator.clipboard.writeText(input.value);
+        return true;
+    } catch (_) {
+        input.focus();
+        input.select();
+        try {
+            return document.execCommand('copy');
+        } catch (__) {
+            return false;
+        }
+    }
+}
+
 function clearShareHash() {
     const url = urlWithoutShare(window.location.href);
     if (url === window.location.href) return false;
@@ -889,16 +937,13 @@ async function shareCurrentConfig() {
     const result = document.getElementById('share-config-result');
     const status = document.getElementById('share-config-status');
     try {
-        link.value = await createShareUrl(window.location.href, currentConfig());
+        link.value = await createShareUrl(window.location.href, currentConfig(), shareSchema());
         result.hidden = false;
         link.focus();
         link.select();
-        try {
-            await navigator.clipboard.writeText(link.value);
-            status.textContent = 'Link copied. It includes your current setup.';
-        } catch (_) {
-            status.textContent = 'Copy the link above to share your setup.';
-        }
+        status.textContent = await copyText(link)
+            ? 'Link copied. It includes your current setup.'
+            : 'Copy the link above to share your setup.';
     } catch (error) {
         status.textContent = 'Could not create a share link for this setup.';
         console.warn('Could not create share link:', error);
@@ -6026,7 +6071,7 @@ window.closeFacilitiesOnBackdrop = function(event) {
 async function initApp() {
     let sharedData = null;
     try {
-        sharedData = await readShareHash(window.location.hash);
+        sharedData = await readShareHash(window.location.hash, shareSchema());
     } catch (error) {
         document.getElementById('share-config-status').textContent = 'This share link is invalid. Your saved setup was kept.';
         console.warn('Could not load shared config:', error);
@@ -6039,6 +6084,7 @@ async function initApp() {
     // Today's season, unless what's saved says otherwise (see `loadInputsFromStorage`).
     document.getElementById('season-id').value = seasonAt().id;
     if (!savedData) unlockNewSeasonNotes([]);
+    captureFreshFields();
     loadInputsFromStorage(savedData);
     attachAutoSave();
     attachFacilityTierHandlers();
