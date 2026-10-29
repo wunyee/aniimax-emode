@@ -250,6 +250,7 @@ export const SPECIAL_RECIPES = [
     { name: 'strawberry_candy', facility: 'Blazing Stove' },
     { name: 'flowers_in_a_bottle', facility: 'Crafting Table' },
     { name: 'lotion', facility: 'Phonolfactory Table' },
+    { name: 'orange_flower_rice_drink', facility: 'Blazing Stove' },
 ];
 
 // Home seasons, from RV 10: limited-time events that come round again (the game's
@@ -286,14 +287,13 @@ export const SEASONS = [
         minHomeLevel: 10,
         runs: [{ start: '2026-10-29T10:00:00+08:00', end: '2026-12-10T07:59:59+08:00' }],
         crops: ['magic_pumpkin', 'memory_lanternfruit'],
-        // Every one of its recipes takes a Recipe Note in the game files; which ones the season
-        // hands out isn't known yet, so they start ticked and the player unticks any they lack.
+        // The Recipe Notes its shop sells for Weird Jelly Beans (shop_commodity_data); Sea Salt
+        // Roasted Pumpkin and Candied Lanternfruit aren't sold, so everyone has them. They start
+        // ticked; the player unticks any they haven't bought.
         notesStartUnlocked: true,
         recipeNotes: [
-            { name: 'sea_salt_roasted_pumpkin' },
             { name: 'magic_pumpkin_cake' },
             { name: 'magic_pumpkin_lantern' },
-            { name: 'candied_lanternfruit' },
             { name: 'gleam_fruit_nectar' },
             { name: 'memory_lantern' },
             { name: 'golden_lantern_pumpkin_soup' },
