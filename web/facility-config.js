@@ -343,8 +343,10 @@ export const LEVEL_UP_COSTS = {
     18: { coins: 11600000, items: [['laminated_beams', 800], ['refined_ore', 520]] },
     19: { coins: 17100000, items: [['densified_timber_component', 400], ['microcrystalline_ore_plate', 220]] },
     20: { coins: 20800000, items: [['densified_timber_component', 490], ['microcrystalline_ore_plate', 270]] },
-    21: { coins: 34300000, items: [['densified_timber_component', 830], ['microcrystalline_ore_plate', 3720]] },
-    22: { coins: 52600000, items: [['densified_timber_component', 1190], ['microcrystalline_ore_plate', 10580]] },
+    // RV 21 and 22's Microcrystalline Ore Plates as the game corrected them after the 10/29 update;
+    // the game files still say 3720 and 10580.
+    21: { coins: 34300000, items: [['densified_timber_component', 830], ['microcrystalline_ore_plate', 460]] },
+    22: { coins: 52600000, items: [['densified_timber_component', 1190], ['microcrystalline_ore_plate', 1320]] },
 };
 
 // The Woodworking Bench and Chimney Kiln chains, lowest tier first: what a player might have in
