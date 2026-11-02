@@ -71,7 +71,7 @@ export const FACILITIES = [
         name: 'Floral Windmill', slug: 'floral-windmill', defaultCount: 0, category: 'Aniimo Materials', hasLevels: false, hasWorker: true, ability: 'Leisure', personality: 'Nimble',
         unlocks: { 1: 18 },
         counts: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1],
-        tooltip: "Scales, Quick Scales (need Adequate)&#10;Not yet verified in game."
+        tooltip: "Scales, Quick Scales (need Adequate)"
     },
     {
         name: 'Heat Furnace', slug: 'heat-furnace', defaultCount: 0, category: 'Environment', hasLevels: false,
